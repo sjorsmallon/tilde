@@ -41,18 +41,9 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
     fatal_error("player_move: aim_turn_across_step.push_count is {}, which divides the step by zero",
                 input.aim_turn_across_step.push_count);
 
-  // A frozen hull is itself one of the cut's movers (statues.hpp), and there is no uid in here to
-  // skip it by: the step sees none, or it is pushed out of its own box.
-  const bool frozen = shared::override_freezes(state.movement.active_override);
-  const shared::predicted_world_t world =
-      frozen ? shared::predicted_world_t{.disabled_geometry  = world_as_cut.disabled_geometry,
-                                         .movement_volumes   = world_as_cut.movement_volumes,
-                                         .movement_modifiers = world_as_cut.movement_modifiers,
-                                         .reveal_cones       = world_as_cut.reveal_cones,
-                                         .shadow_volumes     = world_as_cut.shadow_volumes,
-                                         .lenses             = world_as_cut.lenses,
-                                         .lens_watchers      = world_as_cut.lens_watchers}
-             : world_as_cut;
+  // A frozen hull is itself one of the cut's movers (statues.hpp), as a player in a solid light is its own
+  // shadow's: the caller's view leaves them out by uid (predicted_world_t::mover_uids_to_ignore).
+  const shared::predicted_world_t& world = world_as_cut;
 
   // The hull is tested where the step OPENS, so every number below is one value for the whole step.
   const shared::movement_settings_t settings = shared::modified_movement_settings(
@@ -315,7 +306,7 @@ mover_push_t push_player_by_movers(const Bounding_Volume_Hierarchy& bvh,
 
   for (const shared::mover_t& mover : movers)
   {
-    if (mover.pieces.empty())
+    if (mover.pieces.empty() || shared::mover_is_ignored(world.mover_uids_to_ignore, mover.uid))
       continue;
 
     if (movement.ground_mover_uid != mover.uid)

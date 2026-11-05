@@ -37,7 +37,7 @@ void push_players_by_movers(server_context_t& context, const shared::predicted_w
        context.world.session.entity_system.entities_of_type<entities::Player_Entity>())
   {
     const mover_push_t push = push_player_by_movers(
-        context.world.session.bvh, shared::get_predicted_world_for_team(world, player.team_allegiance),
+        context.world.session.bvh, shared::get_predicted_world_for_player(world, player),
         player.movement, player.position, shared::player_half_width, shared::player_half_height);
     player.position = push.feet;
 

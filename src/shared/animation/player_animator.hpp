@@ -82,11 +82,13 @@ const aim_pose_set_t &holding_gun_aim_poses();
 // what the poses cover. Both angles are degrees and the difference is wrapped
 // to (-180, 180], so crossing the 0/360 seam does not spin the model.
 //
-// THE SERVER IS THE ONLY CALLER THAT ADVANCES. It runs this once per player per
-// fixed tick off the replicated view yaw and writes the result to
-// `Player_Entity::body_yaw`; clients read that field. A client calling this
-// would be a second integrator on the render clock, which is exactly the
-// three-way disagreement the field exists to end.
+// THE SERVER ADVANCES EVERY PLAYER'S. It runs this once per player per fixed
+// tick off the replicated view yaw and writes the result to
+// `Player_Entity::body_yaw`; clients read that field for everyone they draw.
+// The one other caller is the client for its OWN shadow-only body
+// (visual_effects_t::own_body_yaw), on the frame clock off the predicted view
+// yaw: that body is drawn into the shadow maps alone and places no hitbox, so
+// the two integrators never disagree about anything that is tested.
 float advance_body_yaw(float &body_yaw, float view_yaw, float delta_time,
                        const aim_settings_t &settings);
 

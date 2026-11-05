@@ -702,6 +702,11 @@ constexpr uint32_t MAX_SCENE_RIPPLES = 16;
 constexpr uint32_t MAX_SCENE_BEAM_RIPPLES = 4;
 // Bit 16 of a volume's packed counts, above the two byte-wide plane counts: scene.glsl's shadow_volume_cuts_geometry.
 constexpr uint32_t SCENE_SHADOW_VOLUME_CUTS_GEOMETRY_BIT = 1u << 16;
+// Bit 17: scene.glsl's shadow_volume_is_marched; the top byte its light's index in `lights`, 0xff for none.
+constexpr uint32_t SCENE_SHADOW_VOLUME_MARCHED_BIT       = 1u << 17;
+constexpr uint32_t SCENE_SHADOW_VOLUME_LIGHT_INDEX_SHIFT = 24;
+constexpr uint32_t SCENE_SHADOW_VOLUME_NO_LIGHT_INDEX    = 0xffu;
+static_assert(MAX_SCENE_LIGHTS < SCENE_SHADOW_VOLUME_NO_LIGHT_INDEX);
 
 // std140, so the two pads land the light array on a 16-byte boundary.
 struct scene_uniform_t
@@ -771,13 +776,13 @@ struct scene_uniform_t
   float       beam_ripple_settings[4]                       = {}; // x how many of `beam_ripples` are live, y the age one is dropped at
   float       beam_ripples[MAX_SCENE_BEAM_RIPPLES][8]       = {}; // where a player landed xyz and how long ago, then the beam's light uid bits and three spare
   float       shadow_volume_lights[MAX_SCENE_SHADOW_VOLUMES / 4][4] = {}; // volume v's light uid bits at [v / 4][v % 4]
-  float       shadow_volume_counts[MAX_SCENE_SHADOW_VOLUMES / 4][4] = {}; // volume v's side plane count | front plane count << 8 | cuts_geometry << 16, as float bits, at [v / 4][v % 4]
+  float       shadow_volume_counts[MAX_SCENE_SHADOW_VOLUMES / 4][4] = {}; // volume v's side plane count | front plane count << 8 | cuts_geometry << 16 | drawn_by_march << 17 | its light's index in `lights` << 24 (0xff for none), as float bits, at [v / 4][v % 4]
   float       shadow_volume_boxes[MAX_SCENE_SHADOW_VOLUMES][8]      = {}; // the box around drawn volume v's body, min xyz then max xyz; shadow_body.vert draws it
   float       reveal_settings[4]                           = {}; // x how many of `reveal_cones` reveal, from the first; y how many erase, after those
   float       reveal_cones[MAX_SCENE_REVEAL_CONES][8]       = {}; // apex xyz and range, then axis xyz and the cosine of the half-angle
   float       shadow_volume_settings[4]                     = {}; // x how many of `shadow_volumes` are live, y r_shadow_volume_alpha, z 1 when the volumes are drawn, w how many of `shadow_occluders` are live
   float       shadow_volume_color[4]                        = {}; // xyz the colour a drawn volume's body is filled with, w how much of it the line and rim keep
-  float       shadow_volume_fill[4]                         = {}; // x 1 when the pass names a fill cubemap, which the body then shows by line of sight instead of the colour
+  float       shadow_volume_fill[4]                         = {}; // x 1 when the pass names a fill cubemap, which the body then shows by line of sight instead of the colour, y r_shadow_volume_march_steps
   float       shadow_volumes[MAX_SCENE_SHADOW_VOLUMES][4 * shared::MAX_SHADOW_VOLUME_PLANES] = {}; // planes as normal xyz and dot(normal, point), side slots then back slots; an unused one is (0, 0, 0, 1e9)
   float       shadow_occluder_bits[MAX_SCENE_SHADOW_OCCLUDERS / 4][4] = {}; // occluder o's volume_bits, bit 31 its receives, at [o / 4][o % 4], as float bits
   float       shadow_occluder_counts[MAX_SCENE_SHADOW_OCCLUDERS / 4][4] = {}; // occluder o's pyramid plane count | front plane count << 8, as float bits
@@ -7701,8 +7706,20 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
     static_assert(sizeof(volume.light) == sizeof(float));
     memcpy(&scene.shadow_volume_lights[(written_volume_count - 1) / 4][(written_volume_count - 1) % 4],
            &volume.light, sizeof(float));
+    uint32_t light_index = SCENE_SHADOW_VOLUME_NO_LIGHT_INDEX;
+    for (int32_t candidate = 0; candidate < scene.light_count; ++candidate)
+      if (pass.lights[(uint32_t)candidate].uid == volume.light)
+      {
+        light_index = (uint32_t)candidate;
+        break;
+      }
+    if (volume.drawn_by_march && light_index == SCENE_SHADOW_VOLUME_NO_LIGHT_INDEX)
+      log_error("[renderer] marched shadow volume of caster {} names light {}, which this view pass does not carry",
+                volume.caster, volume.light);
     const uint32_t volume_counts = volume.side_plane_count | (volume.light_facing_plane_count << 8) |
-                                   (volume.cuts_geometry ? SCENE_SHADOW_VOLUME_CUTS_GEOMETRY_BIT : 0u);
+                                   (volume.cuts_geometry ? SCENE_SHADOW_VOLUME_CUTS_GEOMETRY_BIT : 0u) |
+                                   (volume.drawn_by_march ? SCENE_SHADOW_VOLUME_MARCHED_BIT : 0u) |
+                                   (light_index << SCENE_SHADOW_VOLUME_LIGHT_INDEX_SHIFT);
     memcpy(&scene.shadow_volume_counts[(written_volume_count - 1) / 4][(written_volume_count - 1) % 4],
            &volume_counts, sizeof(float));
 
@@ -8503,6 +8520,8 @@ static void record_mesh_draws(VkCommandBuffer cmd, Span<const mesh_draw_t> draws
 
     if (has_layout(mesh.layout, vertex_layout_t::skinned) && !skinning[draw_index].valid())
       continue; // already logged; drawing it unposed would be a lie
+    if (draw.shadow_caster == shadow_caster_t::shadow_only)
+      continue;
 
     for (uint32_t submesh_index = 0; submesh_index < mesh.submeshes.size(); ++submesh_index)
     {
@@ -8740,8 +8759,8 @@ static void record_outline_mask_draws(VkCommandBuffer cmd, const view_pass_t& pa
     for (uint32_t draw_index = 0; draw_index < pass.draws.size(); ++draw_index)
     {
       const mesh_draw_t& draw = pass.draws[draw_index];
-      if (draw.outline == outline_t::none || !draw.mesh.valid() ||
-          draw.mesh.index >= g_meshes.size())
+      if (draw.outline == outline_t::none || draw.shadow_caster == shadow_caster_t::shadow_only ||
+          !draw.mesh.valid() || draw.mesh.index >= g_meshes.size())
         continue;
 
       const gpu_mesh_t& mesh    = g_meshes[draw.mesh.index];
@@ -9940,6 +9959,7 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.shadow_volume_color[2]    = std::max(look.shadow_volume_color.z, 0.0f);
     scene.shadow_volume_color[3]    = std::clamp(look.shadow_volume_edge_tint, 0.0f, 1.0f);
     scene.shadow_volume_fill[0]     = pass.shadow_fill.valid() ? 1.0f : 0.0f;
+    scene.shadow_volume_fill[1]     = (float)std::clamp(look.shadow_volume_march_steps, 1, 256);
     scene.fog_settings[1]     = FOG_GRID_NEAR;
     scene.fog_settings[2]     = fog_far;
     scene.fog_settings[3]     = std::clamp(look.fog_anisotropy, -0.95f, 0.95f);

@@ -65,8 +65,9 @@ void update_extending_platforms(server_context_t& context, const shared::predict
     {
       const entities::Player_Entity* owner =
           entity_system.get<entities::Player_Entity>(platform.projectile.owner_uid);
-      const shared::predicted_world_t view = shared::get_predicted_world_for_team(
-          world, owner != nullptr ? owner->team_allegiance : entities::Team_Allegiance::Free_For_All);
+      const shared::predicted_world_t view =
+          owner != nullptr ? shared::get_predicted_world_for_player(world, *owner)
+                           : shared::get_predicted_world_for_team(world, entities::Team_Allegiance::Free_For_All);
 
       const vec3f to = platform.position + linalg::forward(platform.orientation) * platform.max_length;
       const std::optional<shared::projectile_hit_t> hit = shared::sweep_projectile(

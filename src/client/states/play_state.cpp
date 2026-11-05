@@ -974,6 +974,14 @@ struct play_frame_t
   std::optional<shared::replay_view_sample_t> first_person_view{};
 };
 
+// Our own view of the frame's storage: our team's, less our own statue and shadow; a spectator's is nobody's.
+static shared::predicted_world_t get_predicted_world_for_own_player(client_context_t& ctx, const play_frame_t& frame)
+{
+  const entities::Player_Entity* my_player = try_find_my_player(ctx);
+  return my_player != nullptr ? shared::get_predicted_world_for_player(frame.predicted_world_storage, *my_player)
+                              : shared::get_predicted_world_for_team(frame.predicted_world_storage, frame.team);
+}
+
 // collected once per frame.
 static void compute_disabled_geometry_for_frame(client_context_t& ctx, play_frame_t& frame)
 {
@@ -981,7 +989,7 @@ static void compute_disabled_geometry_for_frame(client_context_t& ctx, play_fram
   const entities::Player_Entity* my_player = try_find_my_player(ctx);
   frame.team = my_player != nullptr ? my_player->team_allegiance : entities::Team_Allegiance::Free_For_All;
 
-  frame.predicted_world = shared::get_predicted_world_for_team(frame.predicted_world_storage, frame.team);
+  frame.predicted_world = get_predicted_world_for_own_player(ctx, frame);
 }
 
 
@@ -1018,9 +1026,9 @@ static void compute_predicted_world_for_input(
       }
 
   ctx.visuals.drawn_shadow_volume_report = shared::compute_predicted_world_at_tick(
-      session, settings, sights, ctx.world.session.solid_beam_cache, ctx.world.session.projector_mask_cache,
-      frame.predicted_world_storage);
-  frame.predicted_world = shared::get_predicted_world_for_team(frame.predicted_world_storage, frame.team);
+      session, settings, sights, ctx.world.session.solid_beam_cache, ctx.world.session.solid_shadow_cache,
+      ctx.world.session.projector_mask_cache, frame.predicted_world_storage);
+  frame.predicted_world = get_predicted_world_for_own_player(ctx, frame);
 }
 
 

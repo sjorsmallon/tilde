@@ -32,6 +32,7 @@ namespace shared
 
 struct Entity_System;
 struct projector_mask_cache_t;
+struct player_shadow_caster_t;
 
 // A silhouette with more edges (plus the spot beam's planes that cut it), or a piece with more faces toward
 // the light, than these casts nothing; the scene block carries exactly these slots per volume, side slots
@@ -87,6 +88,9 @@ struct shadow_volume_t
   // then a spot beam's cone planes that cut the pyramid, which the beam pass leaves out of its margins.
   uint32_t                                      ring_plane_count = 0;
   bool                                          has_far_cap      = false;
+  // A player's volume (projector_plan.md ss1b): its body is drawn by marching the view chord through it against
+  // the light's shadow map, not from these planes, which only bound the walk.
+  bool                                          drawn_by_march = false;
 };
 
 // What a DRAWN volume lands on or is stopped by (shadow_volume_plan.md ss5): a piece the volume touches, as
@@ -249,6 +253,8 @@ struct shadow_volume_report_t
   uint32_t caster_pieces            = 0;
   // Dark rectangles of projector pictures, cast after the pieces (projector_mask.hpp).
   uint32_t mask_pieces              = 0;
+  // Players, cast into the shadows_are_solid lights alone (player_shadow_casters.hpp).
+  uint32_t player_pieces            = 0;
   uint32_t cast                     = 0;
   uint32_t refused_inside_caster    = 0;
   uint32_t refused_open_silhouette  = 0;
@@ -268,7 +274,9 @@ struct shadow_volume_report_t
 // Every shadow light against every caster piece: every static piece in the BVH whose owner is
 // switched on and is not a receiver (a plain map brush has no owner and casts), and every piece of
 // every mover but a light's own (a solid beam, a solid shadow: light and dark cast no shadow), at the end-of-tick pose the movers were already cut at; a light that rides one is
-// read at the same pose. A volume that touches no receiver's bounds is dropped unless its light draws
+// read at the same pose. After the movers, every player's piece (`player_casters`), into the
+// shadows_are_solid lights alone: a player darkens no shadow platform and casts no drawn body here.
+// A volume that touches no receiver's bounds is dropped unless its light draws
 // a beam the volume cuts: nothing else would read it, and the scene block holds few. After every piece, the
 // dark of each projector's picture casts as pieces on its glass, read from `projector_masks` and computed
 // into it on the first ask (projector_mask.hpp). The kept list is
@@ -281,6 +289,7 @@ void collect_shadow_volume_edges(const shadow_volume_t& volume, float reach, std
 
 shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const Bounding_Volume_Hierarchy& bvh,
                                               Span<const entity_uid_t> owner_of, Span<const mover_t> movers,
+                                              Span<const player_shadow_caster_t> player_casters,
                                               const mover_rests_t& rests, projector_mask_cache_t& projector_masks,
                                               std::vector<shadow_volume_t>& out);
 

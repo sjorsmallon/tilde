@@ -23,12 +23,15 @@
 
 #include "array.hpp"
 #include "disabled_geometry.hpp"
+#include "entities/generated/entities/player_entity_generated.hpp"
+#include "lighting/player_shadow_casters.hpp"
 #include "movement/movement_modifiers.hpp"
 #include "movement/movement_volumes.hpp"
 #include "movers.hpp"
 #include "lighting/lens.hpp"
 #include "lighting/reveal_light.hpp"
 #include "lighting/solid_beams.hpp"
+#include "lighting/solid_shadows.hpp"
 #include "lighting/shadow_volume.hpp"
 #include "span.hpp"
 
@@ -73,7 +76,20 @@ struct predicted_world_t
   // Where a GEOMETRY_SOLID_WHERE_LENSED byte is solid: seen by a watcher through a lens (lens.hpp).
   Span<const lens_t>         lenses;
   Span<const lens_watcher_t> lens_watchers;
+
+  // Movers this view does not see, by uid: a player's own statue (statues.hpp) and its own solid shadow
+  // (player_shadow_casters.hpp), which it is inside by construction. Read by every pass over `movers`: the
+  // kernel's candidates, the mover push and the projectile sweep, so you shoot through what you walk through.
+  Span<const entity_uid_t> mover_uids_to_ignore;
 };
+
+[[nodiscard]] inline bool mover_is_ignored(Span<const entity_uid_t> mover_uids_to_ignore, entity_uid_t mover_uid)
+{
+  for (const entity_uid_t ignored : mover_uids_to_ignore)
+    if (ignored == mover_uid)
+      return true;
+  return false;
+}
 
 // The STORAGE the three views are over, held by the caller across ticks so a
 // rebuild reuses the vectors rather than reallocating them. Separate from the
@@ -94,6 +110,7 @@ struct predicted_world_storage_t
   std::vector<shadow_volume_t>                               shadow_volumes;
   std::vector<lens_t>                                        lenses;
   std::vector<lens_watcher_t>                                lens_watchers;
+  std::vector<player_shadow_caster_t>                        player_shadow_casters;
 };
 
 [[nodiscard]] inline predicted_world_t get_predicted_world_for_team(const predicted_world_storage_t& storage,
@@ -112,6 +129,16 @@ struct predicted_world_storage_t
           .shadow_volumes     = storage.shadow_volumes,
           .lenses             = storage.lenses,
           .lens_watchers      = storage.lens_watchers};
+}
+
+// A player's own view: its team's, less the movers that are itself. The span points INTO the entity, so the
+// view lives no longer than the entity system stays unmodified, which is the tick or the frame it was cut for.
+[[nodiscard]] inline predicted_world_t get_predicted_world_for_player(const predicted_world_storage_t& storage,
+                                                                      const entities::Player_Entity&   player)
+{
+  predicted_world_t view    = get_predicted_world_for_team(storage, player.team_allegiance);
+  view.mover_uids_to_ignore = Span<const entity_uid_t>(&player.entity_id, 1);
+  return view;
 }
 
 // The tick a build is FOR. The interval is derived from `tickrate_hz` through tick_interval_seconds, never carried beside it.
@@ -147,6 +174,7 @@ shadow_volume_report_t compute_predicted_world_at_tick(const game_session_t& ses
                                                        const predicted_world_settings_t& settings,
                                                        Span<const player_sight_t> sights,
                                                        solid_beam_cache_t& solid_beam_cache,
+                                                       solid_shadow_cache_t& solid_shadow_cache,
                                                        projector_mask_cache_t& projector_mask_cache,
                                                        predicted_world_storage_t& out);
 

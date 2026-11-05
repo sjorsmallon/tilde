@@ -20,8 +20,9 @@ fly_projectile(server_context_t& context, const shared::predicted_world_storage_
   // You shoot through what you can walk through: the owner's team view, Free_For_All for nobody's.
   const entities::Player_Entity* owner =
       context.world.session.entity_system.get<entities::Player_Entity>(projectile.owner_uid);
-  const shared::predicted_world_t view = shared::get_predicted_world_for_team(
-      world, owner != nullptr ? owner->team_allegiance : entities::Team_Allegiance::Free_For_All);
+  const shared::predicted_world_t view =
+      owner != nullptr ? shared::get_predicted_world_for_player(world, *owner)
+                       : shared::get_predicted_world_for_team(world, entities::Team_Allegiance::Free_For_All);
 
   std::optional<shared::projectile_hit_t> hit = shared::sweep_projectile(
       context.world.session.bvh, view, entity.position, step.position, collision_radius);

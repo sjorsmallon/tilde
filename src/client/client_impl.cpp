@@ -112,6 +112,7 @@ constexpr look_row_t LOOK_ROWS[] = {
     {"Beam", cvars::cvar_id::r_beam_edge_pixels, 0.0f, 8.0f},
     {"Beam", cvars::cvar_id::r_shadow_volume},
     {"Beam", cvars::cvar_id::r_shadow_volume_alpha, 0.0f, 1.0f},
+    {"Beam", cvars::cvar_id::r_shadow_volume_march_steps, 1.0f, 128.0f},
     {"Cel", cvars::cvar_id::r_cel},
     {"Cel", cvars::cvar_id::r_cel_terminator},
     {"Cel", cvars::cvar_id::r_cel_shadow_edge},
@@ -752,6 +753,7 @@ bool Tick()
     look.shadow_volume_color     = {cvars.r_shadow_volume_red, cvars.r_shadow_volume_green,
                                     cvars.r_shadow_volume_blue};
     look.shadow_volume_edge_tint = cvars.r_shadow_volume_edge_tint;
+    look.shadow_volume_march_steps = cvars.r_shadow_volume_march_steps;
     look.misprint_pixels   = cvars.r_stylized ? cvars.r_misprint : 0.0f;
     look.misprint_distance = cvars.r_misprint_distance;
     look.fog              = cvars.r_fog;

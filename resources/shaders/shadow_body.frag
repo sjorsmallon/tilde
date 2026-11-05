@@ -16,6 +16,7 @@ layout(set = 0, binding = 1) uniform samplerCube shadow_fill;
 
 #include "scene.glsl"
 #include "shadow_chord.glsl"
+#include "shadow_march.glsl"
 #include "beam_fill.glsl"
 #include "beam_ripple.glsl"
 
@@ -36,9 +37,15 @@ void main()
     float short_of_surface = SURFACE_BIAS_SHARE * view_depth;
     float surface_t        = view_depth - short_of_surface;
     vec3  surface_point    = origin + surface_t * ray;
-    vec4  lengths          = drawn_shadow_lengths(in_volume, origin, ray, surface_t);
+    // A player's body is read from its light's shadow map and lands as the floor's own shadow, so it has no rim.
+    bool  marched          = shadow_volume_is_marched(in_volume);
+    int   light_index      = marched ? shadow_volume_light_index(in_volume) : -1;
+    vec4  lengths          = marched ? (light_index < 0 ? vec4(0.0, 0.0, EMPTY_ENTER, 0.0)
+                                                        : drawn_shadow_lengths_from_shadow_map(
+                                                              in_volume, scene.lights[light_index], origin, ray, surface_t))
+                                     : drawn_shadow_lengths_from_planes(in_volume, origin, ray, surface_t);
     float in_shadow        = lengths.x;
-    float margin           = shadow_margin_at(in_volume, surface_point);
+    float margin           = marched ? EMPTY_LEAVE : shadow_margin_at(in_volume, surface_point);
     float line_measure     = one_surface ? in_shadow : lengths.y;
     float line_pixels      = pixels_to_zero(line_measure);
     float rim_pixels       = pixels_to_zero(margin);

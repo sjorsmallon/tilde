@@ -184,11 +184,13 @@ static move_result_t run_split(const cvar_state_t& cvars,
                                pad_probe_t* out_pad = nullptr,
                                Span<const uint8_t> disabled_geometry = {},
                                Span<const shared::mover_t> movers = {},
-                               hook_probe_t* out_hook = nullptr)
+                               hook_probe_t* out_hook = nullptr,
+                               Span<const shared::entity_uid_t> mover_uids_to_ignore = {})
 {
-  const shared::predicted_world_t world{.disabled_geometry = disabled_geometry,
-                                        .movement_volumes  = volumes,
-                                        .movers            = movers};
+  const shared::predicted_world_t world{.disabled_geometry    = disabled_geometry,
+                                        .movement_volumes     = volumes,
+                                        .movers               = movers,
+                                        .mover_uids_to_ignore = mover_uids_to_ignore};
   entities::Movement local_movement{};
   entities::Movement& state = movement != nullptr ? *movement : local_movement;
 
@@ -1733,7 +1735,8 @@ static void test_a_frozen_player_is_a_statue(const cvar_state_t& cvars)
   check(rider_movement.ground_mover_uid == frozen_uid, "Movement::ground_mover_uid names the frozen player");
 
   const move_result_t own = run_split(cvars, bvh, Move_Input{}, frozen->position, {}, tick_dt, 4,
-                                      &frozen->movement, {}, nullptr, {}, movers);
+                                      &frozen->movement, {}, nullptr, {}, movers, nullptr,
+                                      Span<const shared::entity_uid_t>(&frozen_uid, 1));
   check(same_vec3(own.position, frozen->position), "the frozen player's own step is not pushed out of its box");
   const shared::predicted_world_t world{.movers = movers};
   const mover_push_t push = push_player_by_movers(bvh, world, frozen->movement, frozen->position,

@@ -7,6 +7,7 @@
 #include "collision/movers.hpp"
 #include "lighting/projector_mask.hpp"
 #include "lighting/solid_beams.hpp"
+#include "lighting/solid_shadows.hpp"
 #include "movement/navmesh.hpp"
 #include <string>
 #include <unordered_map>
@@ -73,6 +74,10 @@ struct game_session_t
   // Each solid beam's last carve with what it was carved from, so a tick that changes nothing in a beam
   // reuses it (solid_beams.hpp).
   solid_beam_cache_t solid_beam_cache;
+
+  // Each solid shadow volume's last piece with the planes it was built from, so a crate under a fixed lamp is
+  // made solid once (solid_shadows.hpp).
+  solid_shadow_cache_t solid_shadow_cache;
 
   // The dark of each projector picture as rectangles, computed from the texture on the first tick that asks
   // (projector_mask.hpp).

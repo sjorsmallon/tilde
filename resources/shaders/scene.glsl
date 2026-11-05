@@ -259,7 +259,8 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     vec4       shadow_volume_settings;
     // xyz = the colour a drawn volume's body is filled with, w = how much of it the line and rim keep.
     vec4       shadow_volume_color;
-    // x = 1 when the pass names a fill cubemap, which the body then shows by line of sight instead of the colour.
+    // x = 1 when the pass names a fill cubemap, which the body then shows by line of sight instead of the colour,
+    // y = r_shadow_volume_march_steps.
     vec4       shadow_volume_fill;
     // Volume v's plane p is [v * MAX_SHADOW_VOLUME_PLANES + p]: the outward normal (xyz) and dot(normal, point) (w).
     // In shadow where inside every side plane and every front plane (reveal.glsl's shadow_margin); an unused
@@ -313,6 +314,19 @@ bool shadow_volume_cuts_geometry(int volume)
 {
     int packed = floatBitsToInt(scene.shadow_volume_counts[volume >> 2][volume & 3]);
     return (packed & (1 << 16)) != 0;
+}
+// A player's volume: its body is marched against its light's shadow map (shadow_chord.glsl), not cut from its planes.
+bool shadow_volume_is_marched(int volume)
+{
+    int packed = floatBitsToInt(scene.shadow_volume_counts[volume >> 2][volume & 3]);
+    return (packed & (1 << 17)) != 0;
+}
+// The volume's light as an index into scene.lights, or -1 when the pass does not carry it.
+int shadow_volume_light_index(int volume)
+{
+    int packed = floatBitsToInt(scene.shadow_volume_counts[volume >> 2][volume & 3]);
+    int index  = (packed >> 24) & 0xff;
+    return index == 0xff ? -1 : index;
 }
 ivec2 shadow_occluder_plane_counts(int occluder)
 {

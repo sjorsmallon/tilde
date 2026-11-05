@@ -218,9 +218,8 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
 
     const bool is_dead = player.health.current_health <= 0;
 
-    // This player's view of the frozen world: its team's walls are not there.
-    const shared::predicted_world_t world =
-        shared::get_predicted_world_for_team(world_storage, player.team_allegiance);
+    // This player's view of the frozen world: its team's walls are not there, nor its own statue or shadow.
+    const shared::predicted_world_t world = shared::get_predicted_world_for_player(world_storage, player);
 
     const shared::input_restrictions_t restrictions{
         .is_dead            = is_dead,

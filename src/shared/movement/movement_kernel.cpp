@@ -281,7 +281,8 @@ void collect_collision_candidates(const Bounding_Volume_Hierarchy& bvh,
 
   for (const shared::mover_t& mover : world.movers)
   {
-    if (!shared::aabbs_intersect(bounds, mover.swept_bounds))
+    if (!shared::aabbs_intersect(bounds, mover.swept_bounds) ||
+        shared::mover_is_ignored(world.mover_uids_to_ignore, mover.uid))
       continue;
     for (const shared::collision_piece_t& piece : mover.pieces)
       if (shared::aabbs_intersect(bounds, piece.bounds))

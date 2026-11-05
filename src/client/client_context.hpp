@@ -456,6 +456,10 @@ struct visual_effects_t
   std::unordered_map<shared::entity_uid_t, uint32_t> footstep_counts;
 
   std::unordered_map<shared::entity_uid_t, drawn_body_t> drawn_bodies;
+  // Where our own feet point, chased from the predicted view yaw on the frame clock: the one body we draw
+  // from what we think we look like rather than from the snapshot, because it is shadow-only and a shadow a
+  // snapshot behind turns late under your own feet. The server's body_yaw still places our hitboxes.
+  float                                                  own_body_yaw = 0.f;
   std::vector<afterimage_t>                              afterimages;
   uint32_t                                               next_afterimage_index = 0;
   // Seconds since the eye's own cut, while r_cut_wipe_seconds has the old view still peeling away; below 0 otherwise.

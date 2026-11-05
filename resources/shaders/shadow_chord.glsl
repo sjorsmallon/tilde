@@ -135,7 +135,25 @@ void clip_to_cone(inout float enter, inout float leave, vec3 from_apex, vec3 ray
         enter = max(enter, roots.y);
 }
 
-// The line of sight's length inside drawn volume `volume` that lands on a receiver: in the volume's shadow
+// Keeps of [enter, leave] the part inside shadow volume `volume`: inside its sides and its front planes.
+void clip_to_shadow_volume(inout float enter, inout float leave, int volume, vec3 origin, vec3 ray)
+{
+    int   first  = volume * MAX_SHADOW_VOLUME_PLANES;
+    ivec2 counts = shadow_volume_plane_counts(volume);
+    for (int slot = 0; slot < counts.x; ++slot)
+    {
+        vec4 side = scene.shadow_volumes[first + slot];
+        clip_to_half_space(enter, leave, side.xyz, side.w, origin, ray);
+    }
+    for (int slot = SHADOW_VOLUME_SIDE_SLOTS; slot < SHADOW_VOLUME_SIDE_SLOTS + counts.y; ++slot)
+    {
+        vec4 front = scene.shadow_volumes[first + slot];
+        clip_to_half_space(enter, leave, front.xyz, front.w, origin, ray);
+    }
+}
+
+// The line of sight's length inside drawn volume `volume` that lands on a receiver, from the volume's planes
+// (shadow_march.glsl answers the same four numbers from the light's shadow map for a player's volume): in the volume's shadow
 // (inside its sides and its front planes), on a ray from the light that hits some receiver the volume
 // touches (inside that occluder's pyramid) and behind no piece at all (inside an occluder's pyramid and lit
 // faces). Each of those is one interval of the line, and the answer is the length of their exact set algebra:
@@ -146,22 +164,11 @@ void clip_to_cone(inout float enter, inout float leave, vec3 from_apex, vec3 ray
 // when nothing is drawn).
 const int MAX_DRAWN_INTERVALS = 2 + 2 * MAX_SHADOW_OCCLUDERS;
 
-vec4 drawn_shadow_lengths(int volume, vec3 origin, vec3 ray, float surface_t)
+vec4 drawn_shadow_lengths_from_planes(int volume, vec3 origin, vec3 ray, float surface_t)
 {
-    int   first      = volume * MAX_SHADOW_VOLUME_PLANES;
-    ivec2 counts     = shadow_volume_plane_counts(volume);
     float side_enter = 0.0;
     float side_leave = EMPTY_ENTER;
-    for (int slot = 0; slot < counts.x; ++slot)
-    {
-        vec4 side = scene.shadow_volumes[first + slot];
-        clip_to_half_space(side_enter, side_leave, side.xyz, side.w, origin, ray);
-    }
-    for (int slot = SHADOW_VOLUME_SIDE_SLOTS; slot < SHADOW_VOLUME_SIDE_SLOTS + counts.y; ++slot)
-    {
-        vec4 front = scene.shadow_volumes[first + slot];
-        clip_to_half_space(side_enter, side_leave, front.xyz, front.w, origin, ray);
-    }
+    clip_to_shadow_volume(side_enter, side_leave, volume, origin, ray);
     if (side_leave <= side_enter)
         return vec4(0.0, 0.0, EMPTY_ENTER, 0.0);
 

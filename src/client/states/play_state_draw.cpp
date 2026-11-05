@@ -459,6 +459,7 @@ void Play_State::draw_shadow_debug_and_volumes(client_context_t &ctx, const draw
     constexpr Array<color_t, 6> LIGHT_COLORS = {colors::magenta, colors::cyan,   colors::yellow,
                                                 colors::orange,  colors::green,  colors::hot_pink};
     auto lights_seen = std::vector<shared::entity_uid_t>{};
+    
     for (size_t volume_index = 0; volume_index < ctx.visuals.drawn_shadow_volumes.size(); ++volume_index)
     {
       const shared::shadow_volume_t& volume = ctx.visuals.drawn_shadow_volumes[volume_index];
@@ -675,13 +676,49 @@ void Play_State::draw_remote_players(client_context_t &ctx, const draw_inputs_t 
 {
 
 
-  // Render remote players and bots: the model, then the debug volumes.
+  // Our own body, into the shadow maps alone (shadow_caster_t::shadow_only): drawn where the prediction has us
+  // and where we are looking, never where the snapshot last saw us, so the shadow at our feet moves with us.
+  // The feet chase the view on the frame clock, the way the server chases everyone's on the tick.
+  if (const entities::Player_Entity* my_player = try_find_my_player(ctx);
+      my_player != nullptr && my_player->health.current_health > 0 && my_player->render.visible)
+  {
+    const aim_settings_t aim = aim_settings_from_cvars(*ctx.cvars);
+    advance_body_yaw(ctx.visuals.own_body_yaw, ctx.prediction.player_yaw, frame.world_delta_seconds, aim);
+
+    const entities::Render&                            render     = my_player->render;
+    const assets::asset_handle_t<assets::mesh_asset_t> mesh_asset = assets::get_mesh(render.mesh);
+    const renderer::mesh_handle_t                      mesh       = get_render_mesh(mesh_asset);
+    const assets::mesh_asset_t*                        mesh_data  = assets::get(mesh_asset);
+    const assets::skeleton_t* skeleton = mesh_data && mesh_data->is_skinned() ? assets::get(mesh_data->skeleton) : nullptr;
+    if (mesh.valid() && skeleton != nullptr)
+    {
+      if (pose_count == pose_storage.size())
+        pose_storage.emplace_back();
+      assets::posed_skeleton_t& posed = pose_storage[pose_count++];
+      posed.clear();
+      compute_aim_posed_skeleton(holding_gun_aim_poses(), *skeleton, ctx.prediction.player_pitch,
+                                 linalg::wrap_degrees(ctx.prediction.player_yaw - ctx.visuals.own_body_yaw), aim, posed);
+
+      renderer::mesh_draw_t draw{};
+      draw.mesh      = mesh;
+      draw.transform = linalg::compose_transform(
+          frame.local_feet + render.offset,
+          linalg::compose_model_rotation(linalg::from_view_angles(ctx.visuals.own_body_yaw, 0.f), render.rotation),
+          render.scale);
+      draw.pose          = posed.skinning;
+      draw.shadow_caster = renderer::shadow_caster_t::shadow_only;
+      scene.meshes.push_back(draw);
+    }
+  }
+
+  // Render remote players and bots: the model, then the debug volumes. The replay's first-person body is
+  // ours for the duration, so it too is drawn into the shadow maps alone.
   const std::optional<int32_t> first_person_slot = try_replay_first_person_slot(ctx.replay, *ctx.cvars);
   for (const auto &[slot, remote_player] : ctx.replication.remote_players)
   {
-    if (!remote_player.active || remote_player.slot_index == ctx.connection.my_slot ||
-        remote_player.slot_index == first_person_slot)
+    if (!remote_player.active || remote_player.slot_index == ctx.connection.my_slot)
       continue;
+    const bool shadow_only = remote_player.slot_index == first_person_slot;
 
     if (remote_player_is_hidden_by_a_merge(ctx, remote_player))
       continue;
@@ -767,6 +804,8 @@ void Play_State::draw_remote_players(client_context_t &ctx, const draw_inputs_t 
         // look like. A pose set that failed to load cannot reach here -- that
         // death is fatal.
         draw.pose = posed.skinning;
+        if (shadow_only)
+          draw.shadow_caster = renderer::shadow_caster_t::shadow_only;
         if (ctx.cvars->cl_player_unlit)
           draw.material_overrides = material_variant(mesh, {.shader = renderer::shader_t::unlit});
         scene.meshes.push_back(draw);
@@ -778,6 +817,10 @@ void Play_State::draw_remote_players(client_context_t &ctx, const draw_inputs_t 
                   slot, assets::to_string(render.mesh));
       }
     }
+
+    // A shadow-only body shows no debug hull or hitboxes either: they would sit around the camera.
+    if (shadow_only)
+      continue;
 
     // The player origin is at the FEET -- same convention as
     // `player_eye_height` and the hitbox table -- so the hull sits entirely

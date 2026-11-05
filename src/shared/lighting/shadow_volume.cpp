@@ -1,5 +1,7 @@
 #include "shadow_volume.hpp"
 
+#include "player_shadow_casters.hpp"
+
 #include "collision/collision_detection.hpp"
 #include "geometry/convex_decomposition.hpp"
 #include "entities/generated/entities/directional_light_entity_generated.hpp"
@@ -688,11 +690,12 @@ std::string describe_shadow_volume_report(const shadow_volume_report_t& report, 
 {
   std::string text = std::format(
       "shadow volumes: {} switched-on lights cut geometry, {} receiver pieces, {} caster pieces, {} picture mask "
-      "pieces; {} cast, {} kept "
+      "pieces, {} player pieces; {} cast, {} kept "
       "({} refused: light inside the caster, {} refused: open silhouette, {} refused: light on the silhouette, "
       "{} refused: more than {} silhouette edges or {} faces toward the light, "
       "{} refused: outside the spot's beam, {} dropped: reaching no receiver)",
-      report.cutting_lights, report.receiver_pieces, report.caster_pieces, report.mask_pieces, report.cast, report.kept,
+      report.cutting_lights, report.receiver_pieces, report.caster_pieces, report.mask_pieces, report.player_pieces,
+      report.cast, report.kept,
       report.refused_inside_caster, report.refused_open_silhouette, report.refused_on_silhouette,
       report.refused_too_many_planes, MAX_SHADOW_VOLUME_SIDES,
       MAX_SHADOW_VOLUME_LIGHT_FACING_PLANES, report.refused_outside_beam, report.culled_reaching_nothing);
@@ -806,16 +809,19 @@ struct visited_piece_t
   aabb_bounds_t                         bounds;
   Span<const Plane>                     planes;
   Span<const std::vector<linalg::vec3>> polygons;
+  // A player's piece: cast into the shadows_are_solid lights alone, and no occluder of a drawn body.
+  bool                                  casts_only_into_solid_shadows = false;
 };
 
 // Every piece in the one order both collects agree on, keyed by its place in it: the static pieces
-// in the BVH's order, then every mover's pieces. A mover's pieces cast and occlude; none receives. An
+// in the BVH's order, then every mover's pieces, then every player's. A mover's pieces cast and occlude; none receives. An
 // erased receiver casts from behind itself. A mover that is a light's (a solid beam, a solid shadow) is light
 // or dark: it casts no shadow and stops none, whichever collect it is in by.
 template <typename Visit_T>
 void for_each_shadow_piece(const Entity_System& system, const Bounding_Volume_Hierarchy& bvh,
                            Span<const entity_uid_t> owner_of, Span<const piece_role_t> role_of,
-                           Span<const mover_t> movers, Visit_T&& visit)
+                           Span<const mover_t> movers, Span<const player_shadow_caster_t> player_casters,
+                           Visit_T&& visit)
 {
   uint32_t key = 0;
   for (const BVH_Primitive& primitive : bvh.primitives)
@@ -841,12 +847,21 @@ void for_each_shadow_piece(const Entity_System& system, const Bounding_Volume_Hi
                             .planes   = piece.planes,
                             .polygons = piece.face_polygons});
   }
+  for (const player_shadow_caster_t& caster : player_casters)
+    visit(visited_piece_t{.key                           = key++,
+                          .role                          = piece_role_t::Casts,
+                          .owner                         = caster.uid,
+                          .bounds                        = caster.piece.bounds,
+                          .planes                        = caster.piece.planes,
+                          .polygons                      = caster.piece.face_polygons,
+                          .casts_only_into_solid_shadows = true});
 }
 
 } // namespace
 
 shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const Bounding_Volume_Hierarchy& bvh,
                                               Span<const entity_uid_t> owner_of, Span<const mover_t> movers,
+                                              Span<const player_shadow_caster_t> player_casters,
                                               const mover_rests_t& rests, projector_mask_cache_t& projector_masks,
                                               std::vector<shadow_volume_t>& out)
 {
@@ -916,7 +931,8 @@ shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const
     for (shadow_volume_t& volume : behind)
     {
       ++report.cast;
-      volume.caster_piece = piece.key;
+      volume.caster_piece   = piece.key;
+      volume.drawn_by_march = piece.casts_only_into_solid_shadows;
       bool reaches_a_receiver = false;
       for (const receiver_t& receiver : receivers)
         if (receiver.key != piece.key && shadow_volume_touches_box(volume, receiver.bounds))
@@ -935,14 +951,18 @@ shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const
   };
 
   uint32_t next_key = 0;
-  for_each_shadow_piece(system, bvh, owner_of, role_of, movers, [&](const visited_piece_t& piece)
+  for_each_shadow_piece(system, bvh, owner_of, role_of, movers, player_casters, [&](const visited_piece_t& piece)
   {
     next_key = piece.key + 1;
     if (piece.role != piece_role_t::Casts && piece.role != piece_role_t::Erased)
       return;
-    ++report.caster_pieces;
+    if (piece.casts_only_into_solid_shadows)
+      ++report.player_pieces;
+    else
+      ++report.caster_pieces;
     for (const shadow_light_t& light : lights)
-      cast_piece_into(light, piece);
+      if (light.shadows_are_solid || !piece.casts_only_into_solid_shadows)
+        cast_piece_into(light, piece);
   });
 
   // The dark of each projector's picture, as pieces on its glass, cast into that projector alone: a piece on
@@ -1009,7 +1029,7 @@ uint32_t collect_shadow_occluders(const Entity_System& system, const Bounding_Vo
   const std::vector<piece_role_t>   role_of = resolve_piece_roles(system, owner_of);
   uint32_t                          skipped = 0;
 
-  for_each_shadow_piece(system, bvh, owner_of, role_of, movers, [&](const visited_piece_t& piece)
+  for_each_shadow_piece(system, bvh, owner_of, role_of, movers, {}, [&](const visited_piece_t& piece)
   {
     if (piece.role == piece_role_t::Nothing)
       return;

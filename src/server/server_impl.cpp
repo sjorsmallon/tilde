@@ -645,10 +645,11 @@ void sv_shadow_volume_report(const command_context_t &)
                         .tickrate_hz = context.cvars->sv_tickrate,
                         .gravity     = context.cvars->g_gravity},
                        storage);
+  shared::compute_player_shadow_casters(context.world.session.entity_system, storage.player_shadow_casters);
   const shared::shadow_volume_report_t counts = shared::compute_shadow_volumes(
       context.world.session.entity_system, context.world.session.bvh, context.world.session.owner_of,
-      storage.movers, context.world.session.mover_rests, context.world.session.projector_mask_cache,
-      storage.shadow_volumes);
+      storage.movers, storage.player_shadow_casters, context.world.session.mover_rests,
+      context.world.session.projector_mask_cache, storage.shadow_volumes);
   std::println("{}", shared::describe_shadow_volume_report(counts, storage.shadow_volumes));
 }
 

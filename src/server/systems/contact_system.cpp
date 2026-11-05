@@ -516,8 +516,7 @@ static void apply_land(server_context_t& context, const shared::predicted_world_
                                                              : vec3f{0.f, 1.f, 0.f};
 
   const std::optional<vec3f> feet = try_find_landing_feet(
-      context.world.session.bvh, shared::get_predicted_world_for_team(world, owner->team_allegiance),
-      contact.point, normal);
+      context.world.session.bvh, shared::get_predicted_world_for_player(world, *owner), contact.point, normal);
   if (!feet)
   {
     log_warning("Land contact at ({:.0f}, {:.0f}, {:.0f}) found no hull that fits there: owner "

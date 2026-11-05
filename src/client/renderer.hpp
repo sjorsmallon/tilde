@@ -371,11 +371,15 @@ void update_lightmap(lightmap_handle_t handle, const shared::lightmap_t &lightma
 // Static geometry's occlusion is already in the bake, so it is drawn only into
 // a Dynamic light's map; a dynamic object is drawn into every map. `none` is
 // for gizmos and ghosts. Wireframe and alpha-blended draws never cast.
+// `shadow_only` is a dynamic object the camera never sees: every shadow map,
+// no scene pass and no outline. The first-person body is one, so your shadow
+// is on the floor and your head is not in the lens.
 enum class shadow_caster_t : uint8_t
 {
   none,
   static_geometry,
-  dynamic_object
+  dynamic_object,
+  shadow_only
 };
 
 // A radial discard about `center`, world space: the angle runs from axis_x toward axis_y.
@@ -770,6 +774,7 @@ struct look_settings_t
   float   shadow_volume_alpha     = 0.25f; // r_shadow_volume_alpha
   linalg::vec3f shadow_volume_color = {0.0f, 0.0f, 0.0f}; // r_shadow_volume_red, _green, _blue
   float   shadow_volume_edge_tint = 0.0f;  // r_shadow_volume_edge_tint
+  int32_t shadow_volume_march_steps = 24;  // r_shadow_volume_march_steps
 };
 
 struct antialiasing_settings_t

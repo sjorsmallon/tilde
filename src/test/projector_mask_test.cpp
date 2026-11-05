@@ -186,8 +186,9 @@ int main()
   std::vector<shared::shadow_volume_t> volumes;
   std::vector<shared::mover_t>         movers;
   const shared::shadow_volume_report_t report =
-      shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, masks, volumes);
-  shared::compute_solid_shadows(system, volumes, movers);
+      shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks,volumes);
+  shared::solid_shadow_cache_t solid_shadow_cache;
+  shared::compute_solid_shadows(system, volumes, solid_shadow_cache, movers);
 
   printf("[pin] the picture's dark casts from the glass as the projector's own pieces\n");
   {
@@ -241,7 +242,7 @@ int main()
     projector->texture = assets::texture_asset::Missing;
     std::vector<shared::shadow_volume_t> plain_volumes;
     const shared::shadow_volume_report_t plain =
-        shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, masks, plain_volumes);
+        shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks,plain_volumes);
     check(plain.mask_pieces == 0, "no mask pieces without a picture");
     check(masks.masks.size() == 1, "the cache holds the one seeded mask");
     const shared::projector_mask_t& missing = shared::find_or_compute_projector_mask(masks, assets::texture_asset::Missing);

@@ -586,6 +586,7 @@ add_library(game_shared STATIC
     src/shared/collision/lens_panes.cpp
     src/shared/lighting/solid_beams.cpp
     src/shared/lighting/solid_shadows.cpp
+    src/shared/lighting/player_shadow_casters.cpp
     src/shared/lighting/projector_mask.cpp
     src/shared/subtick.hpp
     src/shared/subtick.cpp
@@ -742,6 +743,7 @@ set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.
                     ${SHADER_SRC_DIR}/ripple.glsl
                     ${SHADER_SRC_DIR}/reveal.glsl
                     ${SHADER_SRC_DIR}/shadow_chord.glsl
+                    ${SHADER_SRC_DIR}/shadow_march.glsl
                     ${SHADER_SRC_DIR}/fog_grid.glsl
                     ${SHADER_SRC_DIR}/dissolve.glsl
                     ${SHADER_SRC_DIR}/simplex_noise.glsl

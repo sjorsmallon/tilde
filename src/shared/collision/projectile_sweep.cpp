@@ -30,6 +30,7 @@ aabb_bounds_t segment_bounds(const linalg::vec3f& from, const linalg::vec3f& to,
 } // namespace
 
 std::optional<projectile_hit_t> sweep_sphere_against_movers(Span<const mover_t> movers,
+                                                            Span<const entity_uid_t> mover_uids_to_ignore,
                                                             const linalg::vec3f& from,
                                                             const linalg::vec3f& to, float radius)
 {
@@ -43,6 +44,8 @@ std::optional<projectile_hit_t> sweep_sphere_against_movers(Span<const mover_t> 
   for (const mover_t& mover : movers)
   {
     if (mover.pieces.empty() || !aabbs_intersect(swept, mover.swept_bounds))
+      continue;
+    if (mover_is_ignored(mover_uids_to_ignore, mover.uid))
       continue;
 
     for (const collision_piece_t& piece : mover.pieces)
@@ -77,7 +80,7 @@ std::optional<projectile_hit_t> sweep_projectile(const Bounding_Volume_Hierarchy
                                                  const linalg::vec3f& to, float radius)
 {
   std::optional<projectile_hit_t> nearest =
-      sweep_sphere_against_movers(world.movers, from, to, radius);
+      sweep_sphere_against_movers(world.movers, world.mover_uids_to_ignore, from, to, radius);
 
   const std::optional<sweep_hit_t> map_hit =
       bvh_sweep_sphere(bvh, from, to, radius, world.disabled_geometry);
@@ -96,7 +99,7 @@ std::optional<projectile_hit_t> sweep_body(const Bounding_Volume_Hierarchy& bvh,
                                            float radius)
 {
   std::optional<projectile_hit_t> nearest =
-      sweep_sphere_against_movers(world.movers, from, to, radius);
+      sweep_sphere_against_movers(world.movers, world.mover_uids_to_ignore, from, to, radius);
 
   const linalg::vec3f reach{radius, radius, radius};
   const auto passes_erased_hole = [&](const BVH_Primitive& primitive, float t)

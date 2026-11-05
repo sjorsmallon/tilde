@@ -42,10 +42,11 @@ struct projectile_target_t
   aabb_bounds_t bounds;
 };
 
-// Every mover's pieces at its END pose, the pose player_move collides with.
+// Every mover's pieces at its END pose, the pose player_move collides with, but the movers the view ignores:
+// a sphere starting inside one would hit it where it starts.
 [[nodiscard]] std::optional<projectile_hit_t>
-sweep_sphere_against_movers(Span<const mover_t> movers, const linalg::vec3f& from,
-                            const linalg::vec3f& to, float radius);
+sweep_sphere_against_movers(Span<const mover_t> movers, Span<const entity_uid_t> mover_uids_to_ignore,
+                            const linalg::vec3f& from, const linalg::vec3f& to, float radius);
 
 // The map through the world's disabled set, then the movers; the nearer wins.
 [[nodiscard]] std::optional<projectile_hit_t>

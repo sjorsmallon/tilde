@@ -68,8 +68,8 @@ void clear_override(entities::Movement& movement);
                                             const move_input_t& input, float dt);
 
 // A frozen hull is a MOVER other players stand on (shared/statues.hpp), so the
-// step must not collide with its own: the kernel sees no movers while this is
-// true, and the mover push skips the hull. Stasis keeps the velocity it was
+// step must not collide with its own: the player's view leaves its own uid out
+// (predicted_world_t::mover_uids_to_ignore), and the mover push skips the hull. Stasis keeps the velocity it was
 // frozen with and hands it back at thaw; Statue was zeroed at attach and falls.
 [[nodiscard]] constexpr bool override_freezes(entities::Movement_Override kind)
 {

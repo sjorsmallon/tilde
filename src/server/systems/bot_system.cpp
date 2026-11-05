@@ -200,9 +200,8 @@ void update_bots(server_context_t &context,
     // for the same reason it is for humans (server_impl.cpp) -- body_yaw places
     // the hit volumes and orients the model, so writing it would spin the corpse
     // under an animation that is supposed to be settling.
-    // A bot walks through its own team's walls like any player: the view is its team's.
-    const shared::predicted_world_t world =
-        shared::get_predicted_world_for_team(world_storage, bot_ent->team_allegiance);
+    // A bot walks through its own team's walls like any player: the view is its own.
+    const shared::predicted_world_t world = shared::get_predicted_world_for_player(world_storage, *bot_ent);
 
     if (bot_ent->health.current_health <= 0)
     {
