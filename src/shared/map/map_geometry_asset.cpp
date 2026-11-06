@@ -8,6 +8,7 @@
 #include "../../third_party/xatlas.h"
 
 #include "log.hpp"
+#include "parse_number.hpp"
 #include <algorithm>
 #include <cmath>
 #include <format>
@@ -77,22 +78,78 @@ const char* to_string(asset_collision_shape_t shape)
   {
     case asset_collision_shape_t::Dop_26: return "dop_26";
     case asset_collision_shape_t::Decompose_Mesh_Into_Convex_Pieces: return "decompose_mesh_into_convex_pieces";
+    case asset_collision_shape_t::Hulls: return "hull";
   }
   fatal_error("to_string: asset_collision_shape_t {} is no member", (int)shape);
 }
 
-std::optional<asset_collision_shape_t> try_parse_collision_file(std::string_view text)
+std::optional<asset_collision_file_t> try_parse_collision_file(std::string_view text, std::string_view file_name)
 {
   const auto is_space = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
-  while (!text.empty() && is_space(text.front()))
-    text.remove_prefix(1);
-  while (!text.empty() && is_space(text.back()))
-    text.remove_suffix(1);
-  for (const asset_collision_shape_t member :
-       {asset_collision_shape_t::Dop_26, asset_collision_shape_t::Decompose_Mesh_Into_Convex_Pieces})
-    if (text == to_string(member))
-      return member;
-  return std::nullopt;
+  std::vector<std::string_view> tokens;
+  for (size_t cursor = 0; cursor < text.size();)
+  {
+    if (is_space(text[cursor]))
+    {
+      ++cursor;
+      continue;
+    }
+    size_t end = cursor;
+    while (end < text.size() && !is_space(text[end]))
+      ++end;
+    tokens.push_back(text.substr(cursor, end - cursor));
+    cursor = end;
+  }
+
+  if (tokens.size() == 1)
+    for (const asset_collision_shape_t member :
+         {asset_collision_shape_t::Dop_26, asset_collision_shape_t::Decompose_Mesh_Into_Convex_Pieces})
+      if (tokens[0] == to_string(member))
+        return asset_collision_file_t{.shape = member};
+  if (tokens.empty() || tokens[0] != to_string(asset_collision_shape_t::Hulls))
+  {
+    log_error("'{}' says neither dop_26, decompose_mesh_into_convex_pieces nor a list of hull blocks", file_name);
+    return std::nullopt;
+  }
+
+  asset_collision_file_t file{.shape = asset_collision_shape_t::Hulls};
+  std::vector<float>     numbers;
+  for (size_t index = 1; index <= tokens.size(); ++index)
+  {
+    if (index < tokens.size() && tokens[index] != to_string(asset_collision_shape_t::Hulls))
+    {
+      float                        value  = 0.f;
+      const std::string_view       token  = tokens[index];
+      const std::from_chars_result result = try_parse_number(token.data(), token.data() + token.size(), value);
+      if (result.ec != std::errc{} || result.ptr != token.data() + token.size())
+      {
+        log_error("'{}': hull block {} holds '{}', which is not a number", file_name, file.hulls.size() + 1, token);
+        return std::nullopt;
+      }
+      numbers.push_back(value);
+      continue;
+    }
+
+    const size_t block = file.hulls.size() + 1;
+    if (numbers.size() % 3 != 0)
+    {
+      log_error("'{}': hull block {} holds {} numbers, which is not a whole number of points", file_name, block,
+                numbers.size());
+      return std::nullopt;
+    }
+    const size_t point_count = numbers.size() / 3;
+    if (point_count < 4 || point_count > MAX_SIDECAR_HULL_POINTS)
+    {
+      log_error("'{}': hull block {} has {} points; a hull takes four to {}", file_name, block, point_count,
+                MAX_SIDECAR_HULL_POINTS);
+      return std::nullopt;
+    }
+    std::vector<linalg::vec3>& points = file.hulls.emplace_back();
+    for (size_t first = 0; first < numbers.size(); first += 3)
+      points.push_back({numbers[first], numbers[first + 1], numbers[first + 2]});
+    numbers.clear();
+  }
+  return file;
 }
 
 std::string collision_sidecar_path_for_mesh_asset(std::string_view mesh_path)
@@ -103,23 +160,49 @@ std::string collision_sidecar_path_for_mesh_asset(std::string_view mesh_path)
   return std::string(has_extension ? mesh_path.substr(0, dot) : mesh_path) + ".collision";
 }
 
-asset_collision_shape_t read_asset_collision_shape(const asset_mesh_source_t& source)
+asset_collision_file_t read_asset_collision_file(const asset_mesh_source_t& source)
 {
   if (source.path.empty())
-    return asset_collision_shape_t::Dop_26;
+    return {};
   const std::string sidecar = collision_sidecar_path_for_mesh_asset(source.path);
   if (!assets::asset_exists(sidecar.c_str()))
-    return asset_collision_shape_t::Dop_26;
+    return {};
   const Span<const uint8_t> bytes = assets::read_asset_bytes(sidecar.c_str());
-  const std::optional<asset_collision_shape_t> parsed =
-      try_parse_collision_file(std::string_view(reinterpret_cast<const char*>(bytes.data), bytes.count));
+  std::optional<asset_collision_file_t> parsed =
+      try_parse_collision_file(std::string_view(reinterpret_cast<const char*>(bytes.data), bytes.count), sidecar);
   if (!parsed)
   {
-    log_error("'{}' says neither dop_26 nor decompose_mesh_into_convex_pieces; {} collides as its dop_26",
-              sidecar, source.path);
-    return asset_collision_shape_t::Dop_26;
+    log_error("{} collides as its dop_26", source.path);
+    return {};
   }
-  return *parsed;
+  return std::move(*parsed);
+}
+
+std::optional<std::vector<collision_piece_t>>
+try_build_collision_pieces_from_hulls(Span<const std::vector<linalg::vec3>> hulls, const linalg::vec3& scale,
+                                      const linalg::vec3& position, const linalg::quatf& orientation,
+                                      std::string_view file_name)
+{
+  std::vector<collision_piece_t> pieces;
+  pieces.reserve(hulls.count);
+  std::vector<linalg::vec3> placed;
+  for (size_t block = 0; block < hulls.count; ++block)
+  {
+    placed.clear();
+    for (const linalg::vec3& point : hulls[block])
+      placed.push_back(position + linalg::rotate(orientation, {point.x * scale.x, point.y * scale.y, point.z * scale.z}));
+    const std::optional<convex_polyhedron_t> body = try_build_convex_hull(placed);
+    if (!body)
+    {
+      log_error("'{}': hull block {} is flat under the scale ({} {} {}); it closes nothing", file_name, block + 1,
+                scale.x, scale.y, scale.z);
+      return std::nullopt;
+    }
+    pieces.push_back({.bounds        = compute_point_bounds(body->vertices),
+                      .planes        = compute_polyhedron_planes(*body),
+                      .face_polygons = compute_polyhedron_face_polygons(*body)});
+  }
+  return pieces;
 }
 
 namespace
@@ -252,9 +335,24 @@ bool collision_pieces_coincide(const collision_piece_t& a, const collision_piece
 
 std::vector<collision_piece_t> compute_asset_mesh_collision_pieces(const mesh_geometry_t &mesh)
 {
-  const asset_mesh_source_t& source = get_mesh_asset_source(mesh);
-  if (read_asset_collision_shape(source) == asset_collision_shape_t::Dop_26)
-    return {compute_asset_mesh_directional_bound_piece(mesh)};
+  const asset_mesh_source_t&   source = get_mesh_asset_source(mesh);
+  const asset_collision_file_t file   = read_asset_collision_file(source);
+  switch (file.shape)
+  {
+    case asset_collision_shape_t::Dop_26: return {compute_asset_mesh_directional_bound_piece(mesh)};
+    case asset_collision_shape_t::Hulls:
+    {
+      std::optional<std::vector<collision_piece_t>> pieces = try_build_collision_pieces_from_hulls(
+          file.hulls, source.scale, mesh.position, mesh.orientation, collision_sidecar_path_for_mesh_asset(source.path));
+      if (!pieces)
+      {
+        log_error("{} collides as its dop_26", source.path);
+        return {compute_asset_mesh_directional_bound_piece(mesh)};
+      }
+      return std::move(*pieces);
+    }
+    case asset_collision_shape_t::Decompose_Mesh_Into_Convex_Pieces: break;
+  }
   const assets::asset_handle_t<assets::mesh_asset_t> handle = resolve_mesh_asset(source);
   const assets::mesh_asset_t* asset = handle.valid() ? assets::get(handle) : nullptr;
   if (asset == nullptr)

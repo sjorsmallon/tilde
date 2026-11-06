@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "../shared/aabb.hpp"
+#include "../shared/array.hpp"
 #include "../shared/color.hpp"
 #include "../shared/linalg.hpp"
 #include "../shared/span.hpp"
@@ -18,6 +19,11 @@ namespace client
 {
 namespace renderer
 {
+
+// One colour per convex piece, so touching pieces read apart: a solid beam's carve, a mesh's collision.
+inline constexpr Array<color_t, 8> COLLISION_PIECE_COLORS = {colors::cyan,   colors::yellow, colors::magenta,
+                                                             colors::green,  colors::orange, colors::white,
+                                                             colors::hot_pink, colors::blue};
 
 enum class fill_mode_t : uint8_t
 {

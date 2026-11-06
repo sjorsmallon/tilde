@@ -587,6 +587,7 @@ add_library(game_shared STATIC
     src/shared/lighting/solid_beams.cpp
     src/shared/lighting/solid_shadows.cpp
     src/shared/lighting/player_shadow_casters.cpp
+    src/shared/lighting/support_planks.cpp
     src/shared/lighting/projector_mask.cpp
     src/shared/subtick.hpp
     src/shared/subtick.cpp
@@ -1269,6 +1270,7 @@ add_game_test(lens_test)
 add_game_test(shadow_volume_test)
 # A shadows_are_solid light's volume is a mover: a hull on the shadow's top face is held, one beside it falls through.
 add_game_test(solid_shadow_test)
+add_game_test(asset_mesh_collision_test)
 add_game_test(directional_bounds_test)
 # A projector picture's dark is rectangles of its grid, cast from the glass as pieces: a hull walks into the
 # dark half of the frame and is stopped, and a texel's uv lands where the frame's matrix maps it.
@@ -1465,3 +1467,8 @@ add_game_test(reliable_stream_test)
 add_executable(map_convert src/tools/map_convert.cpp)
 target_include_directories(map_convert PRIVATE src src/shared)
 target_link_libraries(map_convert PRIVATE game_shared)
+
+# A mesh asset's decoded triangles as an OBJ, for scripts/decompose_mesh.py (geometry_def.md ss11.6).
+add_executable(mesh_triangles src/tools/mesh_triangles.cpp)
+target_include_directories(mesh_triangles PRIVATE src src/shared)
+target_link_libraries(mesh_triangles PRIVATE game_shared)

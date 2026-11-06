@@ -5,14 +5,17 @@
 #include <vector>
 
 // An asset-sourced mesh: an art asset placed with a pose and a scale, borrowing
-// the asset's triangles. It bounds as its oriented box and collides as the word
-// in its `.collision` sidecar says (geometry_def.md §11.6): its directional
-// bound, or its triangles welded into a closed mesh and decomposed into convex
-// pieces, so a letter's shadow has the letter's hole. The bake reads its
-// triangles in world space. Beside map_geometry.cpp, which is past its size.
+// the asset's triangles. It bounds as its oriented box and collides as its
+// `.collision` sidecar says (geometry_def.md §11.6): its directional bound, its
+// triangles welded into a closed mesh and decomposed into convex pieces, or the
+// hulls an offline decomposer wrote (scripts/decompose_mesh.py), so a letter's
+// shadow has the letter's hole. The bake reads its triangles in world space.
+// Beside map_geometry.cpp, which is past its size.
 //
-//   collision_file ::= ws* word ws*
+//   collision_file ::= ws* word ws* | ws* hull (ws+ hull)* ws*
 //   word           ::= "dop_26" | "decompose_mesh_into_convex_pieces"
+//   hull           ::= "hull" (ws+ point)+
+//   point          ::= number ws+ number ws+ number
 
 #include "../assets/asset_types.hpp"
 
@@ -27,17 +30,38 @@ enum class asset_collision_shape_t : uint8_t
 {
   Dop_26,
   Decompose_Mesh_Into_Convex_Pieces,
+  Hulls,
 };
 
+// The sidecar, read: the shape, and under Hulls one point list per block in asset space.
+struct asset_collision_file_t
+{
+  asset_collision_shape_t                shape = asset_collision_shape_t::Dop_26;
+  std::vector<std::vector<linalg::vec3>> hulls;
+};
+
+// The hull is plane enumeration, quartic in its points; a block past this is refused, not waited on.
+inline constexpr size_t MAX_SIDECAR_HULL_POINTS = 64;
+
 const char* to_string(asset_collision_shape_t shape);
-[[nodiscard]] std::optional<asset_collision_shape_t> try_parse_collision_file(std::string_view text);
+
+// Nothing for a file that is none of the three forms, or a hull block that is not whole points, under four
+// or past MAX_SIDECAR_HULL_POINTS; each refusal logs, naming `file_name` and the block.
+[[nodiscard]] std::optional<asset_collision_file_t> try_parse_collision_file(std::string_view text,
+                                                                             std::string_view file_name);
 
 // `resources/glb/letter_o.glb` -> `resources/glb/letter_o.collision`.
 std::string collision_sidecar_path_for_mesh_asset(std::string_view mesh_path);
 
-// The sidecar's word beside `source`'s mesh; Dop_26 with no sidecar, and with a log line for one that
-// says something else.
-asset_collision_shape_t read_asset_collision_shape(const asset_mesh_source_t& source);
+// The sidecar beside `source`'s mesh; Dop_26 with no sidecar, and with a log line for one that is refused.
+asset_collision_file_t read_asset_collision_file(const asset_mesh_source_t& source);
+
+// Each block's points under `scale`, at the pose, hulled into one piece. Nothing when a block is flat,
+// logged naming `file_name` and the block.
+[[nodiscard]] std::optional<std::vector<collision_piece_t>>
+try_build_collision_pieces_from_hulls(Span<const std::vector<linalg::vec3>> hulls, const linalg::vec3& scale,
+                                      const linalg::vec3& position, const linalg::quatf& orientation,
+                                      std::string_view file_name);
 
 // The mesh when `geometry` is one sourced from an asset, else nothing.
 const mesh_geometry_t *find_asset_sourced_mesh(const mesh_geometry_t &geometry);
@@ -75,7 +99,7 @@ try_decompose_asset_mesh_into_collision_pieces(const assets::mesh_asset_t& asset
 bool collision_pieces_coincide(const collision_piece_t& a, const collision_piece_t& b);
 
 // What the placed asset collides as under `collision = Source`: by its sidecar's shape, the directional
-// bound when the decomposition refuses, with a log line naming the asset.
+// bound when the decomposition or a hull block refuses, with a log line naming the asset.
 std::vector<collision_piece_t> compute_asset_mesh_collision_pieces(const mesh_geometry_t &mesh);
 
 // A triangle is its three corners and its OUTWARD unit normal; a degenerate

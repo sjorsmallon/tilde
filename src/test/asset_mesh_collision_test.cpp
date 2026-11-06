@@ -23,6 +23,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <format>
+#include <string>
 #include <vector>
 
 using linalg::vec3;
@@ -86,6 +88,15 @@ static bool inside_any_piece(Span<const shared::collision_piece_t> pieces, const
   return false;
 }
 
+static std::string box_hull_block(const vec3& minimum, const vec3& maximum)
+{
+  std::string block = "hull\n";
+  for (int corner = 0; corner < 8; ++corner)
+    block += std::format("  {} {} {}\n", (corner & 1) ? maximum.x : minimum.x, (corner & 2) ? maximum.y : minimum.y,
+                         (corner & 4) ? maximum.z : minimum.z);
+  return block;
+}
+
 static Bounding_Volume_Hierarchy build_world(const shared::mesh_geometry_t&            floor,
                                              Span<const shared::collision_piece_t> ring_pieces)
 {
@@ -124,20 +135,90 @@ int main()
 {
   static assets::asset_state_t asset_state;
   assets::set_state(&asset_state);
+  assets::mount_asset_source();
   assets::number_asset_ids_from_tree(asset_state, "resources");
 
   printf("[pin] the sidecar's word\n");
   {
-    check(shared::try_parse_collision_file(" decompose_mesh_into_convex_pieces\r\n") ==
+    const auto parse_shape = [](std::string_view text) -> std::optional<shared::asset_collision_shape_t>
+    {
+      const std::optional<shared::asset_collision_file_t> file = shared::try_parse_collision_file(text, "test.collision");
+      return file ? std::optional(file->shape) : std::nullopt;
+    };
+    check(parse_shape(" decompose_mesh_into_convex_pieces\r\n") ==
               shared::asset_collision_shape_t::Decompose_Mesh_Into_Convex_Pieces,
           "decompose_mesh_into_convex_pieces, with whitespace around it");
-    check(shared::try_parse_collision_file("dop_26") == shared::asset_collision_shape_t::Dop_26, "dop_26");
-    check(!shared::try_parse_collision_file("convex hull"), "another word is refused");
+    check(parse_shape("dop_26") == shared::asset_collision_shape_t::Dop_26, "dop_26");
+    check(!parse_shape("convex hull"), "another word is refused");
+    check(!parse_shape("dop_26 dop_26"), "a word twice is refused");
     check(shared::collision_sidecar_path_for_mesh_asset("resources/glb/letter_o.glb") ==
               "resources/glb/letter_o.collision",
           "the sidecar sits beside the mesh under its stem");
     check(shared::collision_sidecar_path_for_mesh_asset("resources/a.b/letter") == "resources/a.b/letter.collision",
           "a dot in a directory name is not an extension");
+  }
+
+  printf("[pin] the sidecar's hull blocks: one piece per block, scaled and posed per placement\n");
+  {
+    // The square ring as four bars, as an offline decomposer would write it: the hole is in no hull.
+    const std::string text = box_hull_block({32.f, 0.f, -64.f}, {64.f, 16.f, 64.f}) +
+                             box_hull_block({-64.f, 0.f, -64.f}, {-32.f, 16.f, 64.f}) +
+                             box_hull_block({-32.f, 0.f, 32.f}, {32.f, 16.f, 64.f}) +
+                             box_hull_block({-32.f, 0.f, -64.f}, {32.f, 16.f, -32.f});
+    const std::optional<shared::asset_collision_file_t> file = shared::try_parse_collision_file(text, "ring.collision");
+    check(file && file->shape == shared::asset_collision_shape_t::Hulls, "hull blocks parse as Hulls");
+    check(file && file->hulls.size() == 4 && file->hulls[0].size() == 8, "four blocks of eight points");
+
+    if (file)
+    {
+      const linalg::quatf quarter_turn = linalg::from_axis_angle({0.f, 1.f, 0.f}, 90.f);
+      const std::optional<std::vector<shared::collision_piece_t>> placed = shared::try_build_collision_pieces_from_hulls(
+          file->hulls, {2.f, 1.f, 1.f}, {0.f, 200.f, 0.f}, quarter_turn, "ring.collision");
+      check(placed && placed->size() == 4, "each block is one piece");
+      size_t most_planes = 0;
+      if (placed)
+        for (const shared::collision_piece_t& piece : *placed)
+          most_planes = std::max(most_planes, piece.planes.size());
+      check(most_planes == 6, "a box block is six planes, its coplanar points one face");
+      if (placed)
+      {
+        const vec3 bar   = linalg::rotate(quarter_turn, vec3{96.f, 8.f, 0.f}) + vec3{0.f, 200.f, 0.f};
+        const vec3 hole  = linalg::rotate(quarter_turn, vec3{48.f, 8.f, 0.f}) + vec3{0.f, 200.f, 0.f};
+        const vec3 above = linalg::rotate(quarter_turn, vec3{96.f, 24.f, 0.f}) + vec3{0.f, 200.f, 0.f};
+        check(inside_any_piece(*placed, bar), "a point in a bar, stretched in x and turned, is inside");
+        check(!inside_any_piece(*placed, hole), "the hole, stretched with it, is in no piece");
+        check(!inside_any_piece(*placed, above), "nor the air above");
+      }
+    }
+
+    check(!shared::try_parse_collision_file("hull 0 0 0  1 0 0  0 1 0", "short.collision"), "three points are refused");
+    check(!shared::try_parse_collision_file("hull 0 0 0  1 0 0  0 1 0  0 0", "torn.collision"),
+          "a torn point is refused");
+    check(!shared::try_parse_collision_file("hull 0 0 0  1 0 0  0 1 0  0 0 x", "word.collision"),
+          "a word among the numbers is refused");
+    check(!shared::try_parse_collision_file("hull", "empty.collision"), "an empty block is refused");
+    check(!shared::try_parse_collision_file("dop_26 hull 0 0 0  1 0 0  0 1 0  0 0 1", "mixed.collision"),
+          "a word before the blocks is refused");
+    std::string crowded = "hull";
+    for (size_t point = 0; point <= shared::MAX_SIDECAR_HULL_POINTS; ++point)
+      crowded += std::format(" {} {} {}", (float)point, (float)(point * point), (float)(point % 7));
+    check(!shared::try_parse_collision_file(crowded, "crowded.collision"), "a block past the point cap is refused");
+
+    const shared::asset_collision_file_t committed = shared::read_asset_collision_file({.path = "resources/glb/mvmt.glb"});
+    const std::optional<std::vector<shared::collision_piece_t>> committed_pieces =
+        shared::try_build_collision_pieces_from_hulls(committed.hulls, {1.f, 1.f, 1.f}, {0.f, 0.f, 0.f},
+                                                      linalg::quatf::identity(), "resources/glb/mvmt.collision");
+    printf("       mvmt.collision: %zu hulls\n", committed.hulls.size());
+    check(committed.shape == shared::asset_collision_shape_t::Hulls && committed_pieces &&
+              committed_pieces->size() == committed.hulls.size(),
+          "the committed mvmt sidecar parses and every block hulls");
+
+    const std::optional<shared::asset_collision_file_t> flat =
+        shared::try_parse_collision_file("hull 0 0 0  64 0 0  64 0 64  0 0 64", "flat.collision");
+    check(flat.has_value(), "a flat block parses: flatness is the hull's to find");
+    check(flat && !shared::try_build_collision_pieces_from_hulls(flat->hulls, {1.f, 1.f, 1.f}, {0.f, 0.f, 0.f},
+                                                                  linalg::quatf::identity(), "flat.collision"),
+          "and is refused when hulled");
   }
 
   const assets::mesh_asset_t ring = make_square_ring(64.f, 32.f, 16.f);

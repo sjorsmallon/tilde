@@ -2424,6 +2424,7 @@ void Play_State::draw_imgui_panels()
 
     ImGui::Separator();
     ImGui::Checkbox("Show Collision Planes", &ctx.cvars->debug_show_collisions);
+    ImGui::Checkbox("Show Collision Pieces", &ctx.cvars->debug_show_collision_pieces);
     ImGui::Checkbox("Show Navmesh", &ctx.cvars->debug_show_navmesh);
     ImGui::Checkbox("Show Hitboxes", &ctx.cvars->debug_show_hitboxes);
     ImGui::Checkbox("Show Box Volumes", &ctx.cvars->debug_show_box_volumes);

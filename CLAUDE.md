@@ -42,6 +42,7 @@ Other tools:
 
 ./cmake_build/bin/asset_pack resources --package cmake_build/assets.pkg   # pkg and embed builds only; loose reads the tree
 ./cmake_build/bin/map_convert --check maps/*.source   # reports any file the save path would write differently
+python scripts/decompose_mesh.py resources/glb/mvmt.glb  # offline hulls into the mesh's .collision sidecar (needs mesh_triangles built)
 ```
 
 `meson.build` is out of date. CMake is primary.
@@ -391,7 +392,7 @@ prediction writes `ctx.prediction`.
   The carve is one flat arena, memoised per spot on pose and volumes; the
   pyramid is built once per range and angle and placed per pose. A `beam`
   spot throws volumes; collision reads only those whose light `cuts_geometry`.
-  A `shadows_are_solid` light's volumes are one mover per light
+  A `solid_shadows` light's volumes are one mover per light
   (`solid_shadows.cpp`), closed at `SOLID_SHADOW_REACH` where open: dark is
   solid, and a light's own movers cast nothing.
 - A `Projector_Entity` is the fourth light kind: a rectangular frame (vertical

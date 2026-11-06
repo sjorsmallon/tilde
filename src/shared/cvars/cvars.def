@@ -671,6 +671,7 @@ Debugging :: cvars {
     // block out of the console's reach for no reason.
     debug_hide_geometry:       bool = false @Client     "Skip drawing map geometry"
     debug_show_wireframe:      bool = false @Client     "Draw every map mesh's edges over the scene, depth biased so they sit in front of the surface they trace; an asset-sourced mesh draws as the wireframe of its triangles. Works with debug_hide_geometry"
+    debug_show_collision_pieces: bool = false @Client   "Draw every convex piece the map collides as, one colour per piece with a faint fill: an asset's sidecar hulls, a mesh's reflex-edge pieces, a dop_26. Movers are not drawn"
     // How long a shot-debug pair stays on screen. A shot is one frame and you
     // cannot see 16ms, so the draw has to outlive the frame that made it --
     // debug_draw_list_t entries carry their own lifetime, which is what this

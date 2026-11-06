@@ -50,7 +50,6 @@ constexpr color_t NO_COLLISION_CONTOUR_COLOR{230, 40, 40};
 
 // The box a selected asset-sourced mesh collides as, and the same box when its
 // collision is switched off and a clip mesh is expected to stand in for it.
-constexpr color_t ASSET_MESH_COLLISION_BOX_COLOR{60, 220, 120};
 constexpr color_t ASSET_MESH_NO_COLLISION_BOX_COLOR{120, 120, 120};
 
 } // namespace
@@ -170,15 +169,24 @@ void draw_geometry_selection_highlight(const shared::mesh_geometry_t &mesh,
   push_wireframe_mesh(draws, shared::resolve_mesh_asset(asset), mesh.position + translation,
                       mesh.orientation, asset.scale, color);
 
-  const color_t box_color = mesh.collision != shared::mesh_collision_t::None ? ASSET_MESH_COLLISION_BOX_COLOR
-                                                                             : ASSET_MESH_NO_COLLISION_BOX_COLOR;
-  for (const shared::collision_piece_t& piece : pieces)
-    for (const std::vector<linalg::vec3>& polygon : piece.face_polygons)
+  const bool                collides = mesh.collision != shared::mesh_collision_t::None;
+  std::vector<linalg::vec3> moved;
+  for (size_t index = 0; index < pieces.size(); ++index)
+  {
+    const color_t piece_color =
+        collides ? renderer::COLLISION_PIECE_COLORS[index % renderer::COLLISION_PIECE_COLORS.size()]
+                 : ASSET_MESH_NO_COLLISION_BOX_COLOR;
+    for (const std::vector<linalg::vec3>& polygon : pieces[index].face_polygons)
     {
-      for (size_t corner = 0; corner < polygon.size(); ++corner)
-        draws.debug.line(polygon[corner] + translation,
-                         polygon[(corner + 1) % polygon.size()] + translation, box_color,
-                         highlight_bias);
+      moved.clear();
+      for (const linalg::vec3& corner : polygon)
+        moved.push_back(corner + translation);
+      for (size_t corner = 0; corner < moved.size(); ++corner)
+        draws.debug.line(moved[corner], moved[(corner + 1) % moved.size()], piece_color, highlight_bias);
+      if (collides)
+        draws.debug.filled_polygon(Span<const linalg::vec3>(moved.data(), (uint32_t)moved.size()),
+                                   with_alpha(piece_color, 24), 0.f, {.depth_bias = highlight_bias});
+    }
   }
 }
 
@@ -314,9 +322,18 @@ bool draw_mesh_inspector(shared::mesh_geometry_t &mesh, Span<const shared::colli
     changed |= draw_mesh_collision_combo(mesh.collision);
     if (mesh.collision == shared::mesh_collision_t::Source)
     {
-      const shared::asset_collision_shape_t shape = shared::read_asset_collision_shape(*asset);
-      ImGui::TextDisabled("the asset collides as its %s (%s): %u piece(s)", shared::to_string(shape),
-                          shared::collision_sidecar_path_for_mesh_asset(asset->path).c_str(), pieces.size());
+      const shared::asset_collision_file_t  file  = shared::read_asset_collision_file(*asset);
+      const shared::asset_collision_shape_t shape = file.shape;
+      const std::string                     sidecar = shared::collision_sidecar_path_for_mesh_asset(asset->path);
+      if (shape == shared::asset_collision_shape_t::Hulls)
+      {
+        ImGui::TextDisabled("%zu hulls from the sidecar (%s)", file.hulls.size(), sidecar.c_str());
+        if (pieces.size() != file.hulls.size())
+          ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "a hull block is flat (the log names it), so it collides as its dop_26");
+      }
+      else
+        ImGui::TextDisabled("the asset collides as its %s (%s): %u piece(s)", shared::to_string(shape), sidecar.c_str(),
+                            pieces.size());
       if (shape == shared::asset_collision_shape_t::Decompose_Mesh_Into_Convex_Pieces)
       {
         const assets::mesh_asset_t* asset_data = assets::get(shared::resolve_mesh_asset(*asset));

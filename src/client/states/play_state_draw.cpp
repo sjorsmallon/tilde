@@ -521,14 +521,13 @@ void Play_State::draw_shadow_debug_and_volumes(client_context_t &ctx, const draw
   }
   if (ctx.cvars->cl_solid_beam_debug)
   {
-    constexpr Array<color_t, 8> PIECE_COLORS = {colors::cyan,   colors::yellow, colors::magenta, colors::green,
-                                                colors::orange, colors::white,  colors::hot_pink, colors::blue};
     for (const shared::mover_t& beam : ctx.visuals.drawn_solid_beams)
     {
       for (size_t index = 0; index < beam.pieces.size(); ++index)
       {
         const shared::collision_piece_t& piece = beam.pieces[index];
-        const color_t                    color = PIECE_COLORS[static_cast<uint32_t>(index) % PIECE_COLORS.size()];
+        const color_t                    color = renderer::COLLISION_PIECE_COLORS[static_cast<uint32_t>(index) %
+                                                                                renderer::COLLISION_PIECE_COLORS.size()];
         for (const std::vector<linalg::vec3>& polygon : piece.face_polygons)
         {
           for (size_t corner = 0; corner < polygon.size(); ++corner)
@@ -1017,6 +1016,23 @@ void Play_State::draw_debug_overlays(client_context_t &ctx, const draw_inputs_t 
     }
 
     ctx.visuals.debug_collision_faces.clear();
+  }
+
+  if (ctx.cvars->debug_show_collision_pieces)
+  {
+    const std::vector<BVH_Primitive>& pieces = ctx.world.session.bvh.primitives;
+    for (size_t index = 0; index < pieces.size(); ++index)
+    {
+      const color_t color =
+          renderer::COLLISION_PIECE_COLORS[static_cast<uint32_t>(index) % renderer::COLLISION_PIECE_COLORS.size()];
+      for (const std::vector<vec3f>& polygon : pieces[index].face_polygons)
+      {
+        for (size_t corner = 0; corner < polygon.size(); ++corner)
+          scene.debug.line(polygon[corner], polygon[(corner + 1) % polygon.size()], color, -60.f);
+        scene.debug.filled_polygon(Span<const vec3f>(polygon.data(), static_cast<uint32_t>(polygon.size())),
+                                   with_alpha(color, 24), 0.f, {.depth_bias = -60.f});
+      }
+    }
   }
 
   // Debug: collision volumes as wireframe AABBs. Magenta for every Box_Volume
