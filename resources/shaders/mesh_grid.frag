@@ -95,9 +95,9 @@ void main() {
         return;
     }
 
-    float solid_ink;
-    vec3  color = light_surface(LOOK_LAMBERT, surface, fragWorldPosition, V, solid_ink);
-    outSurfaceNormal = store_solid_ink(outSurfaceNormal, solid_ink);
+    float solid_ink, solid_shadow;
+    vec3  color = light_surface(LOOK_LAMBERT, surface, fragWorldPosition, V, solid_ink, solid_shadow);
+    outSurfaceNormal = store_surface_ink(outSurfaceNormal, solid_ink, solid_shadow);
 
     // Two levels, 8x apart. The minor one fades as it stops being resolvable and
     // the major one -- still 8x larger on screen -- carries on, so backing away

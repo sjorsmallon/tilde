@@ -12,6 +12,7 @@
 #include "linalg.hpp"
 #include "collision/movers.hpp"
 #include "plane.hpp"
+#include "reveal_light.hpp"
 #include "span.hpp"
 
 #include <cstdint>
@@ -57,7 +58,7 @@ struct shadow_volume_edge_t
 // is lit. A near cap at one depth got the entry wrong for anything flat seen at a grazing angle; the
 // front planes are the entry exactly.
 // The rings are the silhouette's pyramid as lines: side i runs near_ring[i], the caster corner on the
-// silhouette, to far_ring[i] down its ray. The spot beam's clip is not in them; they bound the drawn body.
+// silhouette, to far_ring[i] down its ray. The spot beam's clip is not in them.
 // The debug draw asks collect_shadow_volume_edges for the volume as it is, from the planes.
 struct shadow_volume_t
 {
@@ -77,10 +78,10 @@ struct shadow_volume_t
   // Some receiver's bounds are within it. The collect puts the volumes that cut geometry AND reach one first,
   // so the renderer's few slots hold what changes the floor before what only darkens a beam.
   bool                                          reaches_receiver = false;
-  // Which piece cast it, in the collect's visiting order (static pieces, then every mover's), so the drawn
-  // volume's occluders can leave the caster itself out; an owner uid cannot, two unowned brushes share one.
+  // Which piece cast it, in the collect's visiting order (static pieces, then every mover's): the solid shadow
+  // cache's key beside the light (solid_shadows.hpp); an owner uid cannot be, two unowned brushes share one.
   uint32_t                                      caster_piece = 0;
-  // The caster's corners: the drawn body runs from here to what it lands on, which bounds it for beam.frag.
+  // The caster's corners: the solid shadow's reach box is around them (solid_shadows.hpp).
   aabb_bounds_t                                 caster_bounds = {};
   // Where the rays come from, so the pyramid's edges can be followed back from the near ring.
   linalg::vec3f                                 light_apex        = {0.f, 0.f, 0.f};
@@ -90,47 +91,7 @@ struct shadow_volume_t
   // then a spot beam's cone planes that cut the pyramid, which the beam pass leaves out of its margins.
   uint32_t                                      ring_plane_count = 0;
   bool                                          has_far_cap      = false;
-  // A player's volume (projector_plan.md ss1b): its body is drawn by marching the view chord through it against
-  // the light's shadow map, not from these planes, which only bound the walk.
-  bool                                          drawn_by_march = false;
 };
-
-// A volume whose solid begins at the lens rather than at its caster: the whole pyramid of a from-the-lens piece,
-// a player's (its mover is the pyramid's), a projector picture's dark cell (cast from the glass, so its caster
-// is the light). Such a volume draws no body; a plank says who it holds (support_planks.hpp).
-inline bool shadow_volume_reaches_lens(const shadow_volume_t& volume)
-{
-  return volume.drawn_by_march || volume.caster == volume.light ||
-         volume.solid_shadows == entities::Solid_Shadows::Solid_From_Lens_To_Shadow;
-}
-
-// What a DRAWN volume lands on or is stopped by (shadow_volume_plan.md ss5): a piece the volume touches, as
-// the pyramid it spans from the light (its silhouette sides and the spot's clip, never the range: the rays
-// that hit it) and its planes that face the light, behind all of which is behind the piece. The drawn body
-// is the volume's part inside the pyramid of some piece that `receives` and behind no piece, for every
-// drawn volume whose bit is set in `volume_bits`, bit v for the v-th drawn volume. Collision never reads
-// one: behind the wall a shadow lands on is still the caster's shadow, only not one worth a picture.
-struct shadow_occluder_t
-{
-  Array<Plane, SHADOW_VOLUME_SIDE_SLOTS>      pyramid_planes;
-  uint32_t                                    pyramid_plane_count = 0;
-  Array<Plane, MAX_SHADOW_VOLUME_LIGHT_FACING_PLANES> light_facing_planes;
-  uint32_t                                    light_facing_plane_count = 0;
-  uint32_t                                    volume_bits       = 0;
-  // A receiver: the shadow on it is a platform or a hole, so the body is drawn down to it. A plain piece
-  // only stops the body.
-  bool                                        receives          = false;
-  entity_uid_t                                light             = null_entity_uid;
-  // The piece's corners, cut to a spot's reach as the pyramid is: with the caster's, the drawn body's bounds.
-  aabb_bounds_t                               piece_bounds      = {};
-};
-// Bit of the scene block's occluder word that carries `receives`; the volume bits are below it.
-inline constexpr uint32_t SHADOW_OCCLUDER_RECEIVES_BIT = 1u << 31;
-
-// Inside every pyramid plane: on a ray from the light that hits the piece.
-[[nodiscard]] bool shadow_occluder_pyramid_contains_point(const shadow_occluder_t& occluder, const linalg::vec3f& point);
-// In the pyramid and inside every front plane: from the piece's lit surface onward.
-[[nodiscard]] bool shadow_occluder_is_behind_point(const shadow_occluder_t& occluder, const linalg::vec3f& point);
 
 // What a light contributes: a point the rays leave, or a direction they all share.
 struct shadow_light_t
@@ -157,10 +118,26 @@ struct shadow_light_t
   // The spot draws its beam (spot_beam_plan.md ss5) or is solid as one (solid_beams.hpp): its volumes are kept
   // whether or not one reaches a receiver, since the beam itself reads them.
   bool          keeps_every_volume    = false;
-  // The dark itself is what is stood on, so a volume LANDS on whatever it touches and its body is drawn
-  // there; otherwise a body is drawn only onto a receiver (a shadow platform or hole).
+  // The light's solid_shadows, carried onto every volume it throws (solid_shadows.hpp).
   entities::Solid_Shadows solid_shadows = entities::Solid_Shadows::None;
 };
+
+// A directed light's sides, built once per light and read for every piece: a spot's cone
+// (planes_of_reveal_cone) or a projector's frame. A point or directional light has none.
+struct shadow_light_clip_t
+{
+  std::optional<reveal_cone_planes_t>  beam;
+  Array<Plane, REVEAL_CONE_SIDE_COUNT> sides;
+  uint32_t                             side_count = 0;
+};
+static_assert(REVEAL_CONE_SIDE_COUNT >= 4, "a projector's four frame planes must fit the clip's sides");
+
+[[nodiscard]] shadow_light_clip_t compute_shadow_light_clip(const shadow_light_t& light);
+
+// Within the light's reach and not wholly outside any of its sides, conservatively, plane by plane: the
+// broad phase every piece passes before it is cast. A light with no sides touches every box.
+[[nodiscard]] bool shadow_light_touches_box(const shadow_light_t& light, const shadow_light_clip_t& clip,
+                                            const aabb_bounds_t& box);
 
 // Where a light's reach ends, as the plane that caps its volumes: a spot's or a projector's is square to its
 // direction, a point light's to the ray through `center` (the caster's), and a directional light or one with
@@ -222,24 +199,6 @@ struct shadow_cast_t
                                                                      entity_uid_t                  caster,
                                                                      std::vector<shadow_volume_t>& out);
 
-// The occluder one convex piece is under `light`, with `volume_bits` set, or empty when the piece casts no
-// volume (the same refusals as cast_shadow_volume), its planes outrun the slots, or a spot's reach ends
-// before it. A spot's piece is first cut to the spot's far cap, so the pyramid holds only the rays that hit
-// it within reach: the part of a floor past the range is landed on by nothing. A point light's cap is per
-// caster, so its pieces are not cut.
-[[nodiscard]] std::optional<shadow_occluder_t> try_cast_shadow_occluder(const shadow_light_t& light,
-                                                                        Span<const Plane>     piece_planes,
-                                                                        Span<const std::vector<linalg::vec3>> corner_polygons,
-                                                                        uint32_t volume_bits, bool receives);
-
-// Where drawn volume `volume`'s body can be: inside its sides and inside the box around its caster and every
-// receiver it lands on (the occluders that `receives` with `volume_bit` set), as the bounds of that polytope.
-// A floor the shadow lands on is room-sized; the pyramid cut to the floor's slab is the shadow on it. Empty
-// when the volume lands on nothing, which draws nothing.
-[[nodiscard]] std::optional<aabb_bounds_t> try_compute_drawn_shadow_body_bounds(const shadow_volume_t&       volume,
-                                                                                Span<const shadow_occluder_t> occluders,
-                                                                                uint32_t                      volume_bit);
-
 [[nodiscard]] bool shadow_volume_contains_point(const shadow_volume_t& volume, const linalg::vec3f& point);
 
 // Some of the box is inside: the solid receiver's test, conservative plane by plane as the reveal cone's.
@@ -286,15 +245,16 @@ struct shadow_volume_report_t
 // switched on and is not a receiver (a plain map brush has no owner and casts), and every piece of
 // every mover but a light's own (a solid beam, a solid shadow: light and dark cast no shadow), at the end-of-tick pose the movers were already cut at; a light that rides one is
 // read at the same pose. After the movers, every player's piece (`player_casters`), into the
-// solid_shadows lights alone: a player darkens no shadow platform and casts no drawn body here.
+// solid_shadows lights alone: a player darkens no shadow platform.
 // A volume that touches no receiver's bounds is dropped unless its light draws
 // a beam the volume cuts: nothing else would read it, and the scene block holds few. After every piece, the
 // dark of each projector's picture casts as pieces on its glass, read from `projector_masks` and computed
 // into it on the first ask (projector_mask.hpp). The kept list is
-// ordered, stably, with the volumes that cut geometry and reach a receiver first: the renderer draws the
-// first MAX_SCENE_SHADOW_VOLUMES, and a beam's own volumes must never push a hole or a platform past that.
+// ordered, stably, with the volumes that cut geometry and reach a receiver first: the renderer's cut draws
+// (reveal.glsl) read the first MAX_SCENE_SHADOW_VOLUMES, and a beam's own volumes must never push a hole or a
+// platform past that.
 // APPENDS the volume's side polytope as lines (its silhouette pyramid cut by the beam's cone and its far
-// cap, exactly the planes collision and the beam pass read), bounded `reach` past the caster where it is
+// cap, exactly the planes collision reads), bounded `reach` past the caster where it is
 // open. The back planes are not drawn: they are the caster's own faces.
 void collect_shadow_volume_edges(const shadow_volume_t& volume, float reach, std::vector<shadow_volume_edge_t>& out);
 
@@ -303,14 +263,5 @@ shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const
                                               Span<const player_shadow_caster_t> player_casters,
                                               const mover_rests_t& rests, projector_mask_cache_t& projector_masks,
                                               std::vector<shadow_volume_t>& out);
-
-// What the drawn volumes `drawn` (at most 31, in the order the scene block holds them) land on and are
-// stopped by: every switched-on piece a volume touches other than its own caster becomes one occluder per
-// light, the bits of that light's volumes it touches set, `receives` when the piece is a receiver. Returns
-// how many pieces were skipped for outrunning the plane slots.
-uint32_t collect_shadow_occluders(const Entity_System& system, const Bounding_Volume_Hierarchy& bvh,
-                                  Span<const entity_uid_t> owner_of, Span<const mover_t> movers,
-                                  const mover_rests_t& rests, Span<const shadow_volume_t> drawn,
-                                  std::vector<shadow_occluder_t>& out);
 
 } // namespace shared

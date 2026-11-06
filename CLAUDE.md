@@ -395,6 +395,11 @@ prediction writes `ctx.prediction`.
   A `solid_shadows` light's volumes are one mover per light
   (`solid_shadows.cpp`), closed at `SOLID_SHADOW_REACH` where open: dark is
   solid, and a light's own movers cast nothing.
+- A shadow volume is never drawn in the air (torn out 2026-11-06). A solid
+  light's shadow is marked where it LANDS: the scene shader sets a bit in the
+  normal image's alpha (`solid_shadow_lands_here`), the ink draws the bit's
+  edge as a crease and the cel look fills it flat (`r_solid_shadow_*`). The
+  volumes ride to the GPU as planes for `reveal.glsl`'s cuts alone.
 - A `Projector_Entity` is the fourth light kind: a rectangular frame (vertical
   half angle, aspect, roll from its orientation) with hard edges, no cone and no
   beam, always Dynamic. It ALWAYS takes a shadow layer, cast or not: that

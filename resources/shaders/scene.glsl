@@ -29,14 +29,10 @@
 #define MAX_LENSES 16
 // renderer.hpp's MAX_SCENE_LENS_WATCHERS, kept one number by the same assert.
 #define MAX_LENS_WATCHERS 16
-// renderer.hpp's MAX_SCENE_SHADOW_VOLUMES and shadow_volume.hpp's MAX_SHADOW_VOLUME_PLANES, kept one number by the same assert.
-#define MAX_SHADOW_VOLUMES 24
+// shadow_volume.hpp's MAX_SHADOW_VOLUME_PLANES and SHADOW_VOLUME_SIDE_SLOTS, kept one number by
+// renderer/shadow_volumes.cpp's asserts. A volume's planes [0, SIDE_SLOTS) are its sides, the rest its
+// light-facing planes.
 #define MAX_SHADOW_VOLUME_PLANES 43
-// renderer.hpp's MAX_SCENE_SHADOW_OCCLUDERS, kept one number by the same assert.
-#define MAX_SHADOW_OCCLUDERS 16
-// shadow_volume.hpp's SHADOW_OCCLUDER_RECEIVES_BIT.
-#define SHADOW_OCCLUDER_RECEIVES (1 << 31)
-// shadow_volume.hpp's SHADOW_VOLUME_SIDE_SLOTS: a volume's planes [0, this) are its sides, the rest its light-facing planes.
 #define SHADOW_VOLUME_SIDE_SLOTS 29
 // renderer.hpp's MAX_SCENE_BEAMS, kept one number by the same assert.
 #define MAX_BEAMS 8
@@ -241,40 +237,16 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     // x = how many of `beam_ripples` are live, the newest last; y = the age a ripple is dropped at.
     vec4       beam_ripple_settings;
     BeamRipple beam_ripples[MAX_BEAM_RIPPLES];
-    // Volume v's light is floatBitsToInt(shadow_volume_lights[v >> 2][v & 3]), the uid a Beam's color_light.w names.
-    vec4   shadow_volume_lights[MAX_SHADOW_VOLUMES / 4];
-    // Volume v's live plane counts, floatBitsToInt(shadow_volume_counts[v >> 2][v & 3]): sides in the low byte,
-    // front planes in the next; the slots past them are planes at infinity and need no visit. Bit 16 is the
-    // light's cuts_geometry: only such a volume cuts a shadow_solid or shadow_hole draw, as only it cuts collision.
-    vec4   shadow_volume_counts[MAX_SHADOW_VOLUMES / 4];
-    // The box around drawn volume v's body, its caster's shadow pyramid cut to what it lands on: min at [2v],
-    // max at [2v + 1]. shadow_body.vert draws it, so the body's shader runs there alone; an empty box is a
-    // volume that lands on nothing and draws nothing.
-    vec4   shadow_volume_boxes[MAX_SHADOW_VOLUMES * 2];
+    // x = where this pass's volume records start in shadow_volume_data.glsl's storage.
+    vec4   shadow_volume_storage;
     // x = how many of `reveal_cones` reveal, from the first; y = how many erase, after those.
     vec4       reveal_settings;
     RevealCone reveal_cones[MAX_REVEAL_CONES];
-    // x = how many of `shadow_volumes` are live, y = r_shadow_volume_alpha, z = 1 when the volumes' bodies are drawn,
-    // w = how many of `shadow_occluders` are live.
+    // x = how many shadow volumes the pass carries (shadow_volume_data.glsl), for reveal.glsl's cuts.
     vec4       shadow_volume_settings;
-    // xyz = the colour a drawn volume's body is filled with, w = how much of it the line and rim keep.
-    vec4       shadow_volume_color;
-    // x = 1 when the pass names a fill cubemap, which the body then shows by line of sight instead of the colour,
-    // y = r_shadow_volume_march_steps.
-    vec4       shadow_volume_fill;
-    // Volume v's plane p is [v * MAX_SHADOW_VOLUME_PLANES + p]: the outward normal (xyz) and dot(normal, point) (w).
-    // In shadow where inside every side plane and every front plane (reveal.glsl's shadow_margin); an unused
-    // slot is (0, 0, 0, 1e9), inside for every point.
-    vec4       shadow_volumes[MAX_SHADOW_VOLUMES * MAX_SHADOW_VOLUME_PLANES];
-    // Drawn volume v touches occluder o where bit v of floatBitsToInt(shadow_occluder_bits[o >> 2][o & 3]) is set;
-    // bit 31 (SHADOW_OCCLUDER_RECEIVES) says the piece receives, so the body is drawn down to it rather than only stopped.
-    vec4       shadow_occluder_bits[MAX_SHADOW_OCCLUDERS / 4];
-    // Occluder o's live plane counts as shadow_volume_counts: pyramid planes in the low byte, lit faces in the next.
-    vec4       shadow_occluder_counts[MAX_SHADOW_OCCLUDERS / 4];
-    // Occluder o's plane p is [o * MAX_SHADOW_VOLUME_PLANES + p]: the side slots hold the pyramid the piece spans
-    // from its light, the back slots the piece's lit faces; behind the piece is inside all of both. An unused
-    // slot is (0, 0, 0, 1e9), inside for every point.
-    vec4       shadow_occluders[MAX_SHADOW_OCCLUDERS * MAX_SHADOW_VOLUME_PLANES];
+    // xyz = the flat colour a solid light's shadow is filled with on the surface it lands on, w = how much of it
+    // covers the shading there (r_solid_shadow_fill); 0 leaves the shadow drawn as any other.
+    vec4       solid_shadow_fill;
     // x = how many of `fog_volumes` are live, y = the view depth the fog grid starts at, z = the view depth it ends at,
     // w = r_fog_anisotropy.
     vec4       fog_settings;
@@ -304,34 +276,5 @@ vec3 cel_flat_albedo(sampler2D map, vec2 uv, vec3 sampled)
     return flatness > 0.0 ? mix(sampled, textureLod(map, uv, 1000.0).rgb, flatness) : sampled;
 }
 
-// The live plane counts of volume `volume` / occluder `occluder`: x sides or pyramid planes, y back planes or lit faces.
-ivec2 shadow_volume_plane_counts(int volume)
-{
-    int packed = floatBitsToInt(scene.shadow_volume_counts[volume >> 2][volume & 3]);
-    return ivec2(packed & 0xff, (packed >> 8) & 0xff);
-}
-bool shadow_volume_cuts_geometry(int volume)
-{
-    int packed = floatBitsToInt(scene.shadow_volume_counts[volume >> 2][volume & 3]);
-    return (packed & (1 << 16)) != 0;
-}
-// A player's volume: its body is marched against its light's shadow map (shadow_chord.glsl), not cut from its planes.
-bool shadow_volume_is_marched(int volume)
-{
-    int packed = floatBitsToInt(scene.shadow_volume_counts[volume >> 2][volume & 3]);
-    return (packed & (1 << 17)) != 0;
-}
-// The volume's light as an index into scene.lights, or -1 when the pass does not carry it.
-int shadow_volume_light_index(int volume)
-{
-    int packed = floatBitsToInt(scene.shadow_volume_counts[volume >> 2][volume & 3]);
-    int index  = (packed >> 24) & 0xff;
-    return index == 0xff ? -1 : index;
-}
-ivec2 shadow_occluder_plane_counts(int occluder)
-{
-    int packed = floatBitsToInt(scene.shadow_occluder_counts[occluder >> 2][occluder & 3]);
-    return ivec2(packed & 0xff, (packed >> 8) & 0xff);
-}
 
 #endif // SCENE_GLSL

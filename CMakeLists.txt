@@ -681,8 +681,6 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/mesh_locked_wall.frag
     ${SHADER_SRC_DIR}/beam.vert
     ${SHADER_SRC_DIR}/beam.frag
-    ${SHADER_SRC_DIR}/shadow_body.vert
-    ${SHADER_SRC_DIR}/shadow_body.frag
     ${SHADER_SRC_DIR}/mesh_grid.frag
     ${SHADER_SRC_DIR}/shadow_cutout.frag
     ${SHADER_SRC_DIR}/shadow_keyhole.frag
@@ -743,8 +741,8 @@ set(SHADER_INCLUDES ${SHADER_SRC_DIR}/scene.glsl ${SHADER_SRC_DIR}/pbr_lighting.
                     ${SHADER_SRC_DIR}/peel.glsl
                     ${SHADER_SRC_DIR}/ripple.glsl
                     ${SHADER_SRC_DIR}/reveal.glsl
+                    ${SHADER_SRC_DIR}/shadow_volume_data.glsl
                     ${SHADER_SRC_DIR}/shadow_chord.glsl
-                    ${SHADER_SRC_DIR}/shadow_march.glsl
                     ${SHADER_SRC_DIR}/fog_grid.glsl
                     ${SHADER_SRC_DIR}/dissolve.glsl
                     ${SHADER_SRC_DIR}/simplex_noise.glsl
@@ -933,6 +931,7 @@ add_library(game_client SHARED
     src/client/renderer/pass_set.cpp
     src/client/renderer/lightmap.cpp
     src/client/renderer/shadows.cpp
+    src/client/renderer/shadow_volumes.cpp
     src/client/renderer/fog.cpp
     src/client/renderer/particles.cpp
     src/client/renderer/skybox.cpp
@@ -1467,6 +1466,11 @@ add_game_test(reliable_stream_test)
 add_executable(map_convert src/tools/map_convert.cpp)
 target_include_directories(map_convert PRIVATE src src/shared)
 target_link_libraries(map_convert PRIVATE game_shared)
+
+# The CPU side of the shadow volumes on a map, timed (shadow_volume_plan.md). Usage: shadow_volume_bench <map> [n]
+add_executable(shadow_volume_bench src/tools/shadow_volume_bench.cpp)
+target_include_directories(shadow_volume_bench PRIVATE src src/shared)
+target_link_libraries(shadow_volume_bench PRIVATE game_shared)
 
 # A mesh asset's decoded triangles as an OBJ, for scripts/decompose_mesh.py (geometry_def.md ss11.6).
 add_executable(mesh_triangles src/tools/mesh_triangles.cpp)

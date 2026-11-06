@@ -134,6 +134,41 @@ bool projector_frame_touches_box(const shadow_light_t& light, const aabb_bounds_
   return true;
 }
 
+} // namespace
+
+shadow_light_clip_t compute_shadow_light_clip(const shadow_light_t& light)
+{
+  shadow_light_clip_t clip;
+  if (light.cosine_of_outer_angle > -1.f)
+  {
+    clip.beam = planes_of_reveal_cone({.apex                 = light.apex,
+                                       .axis                 = light.direction,
+                                       .range                = light.range > 0.f ? light.range : FLT_MAX,
+                                       .cosine_of_half_angle = light.cosine_of_outer_angle});
+    clip.sides      = clip.beam->sides;
+    clip.side_count = REVEAL_CONE_SIDE_COUNT;
+  }
+  else if (light.frame_plane_count > 0)
+  {
+    for (uint32_t index = 0; index < light.frame_plane_count; ++index)
+      clip.sides[index] = light.frame_planes[index];
+    clip.side_count = light.frame_plane_count;
+  }
+  return clip;
+}
+
+bool shadow_light_touches_box(const shadow_light_t& light, const shadow_light_clip_t& clip, const aabb_bounds_t& box)
+{
+  if (clip.beam)
+    return reveal_cone_touches_box(*clip.beam, box);
+  if (clip.side_count > 0)
+    return projector_frame_touches_box(light, box);
+  return true;
+}
+
+namespace
+{
+
 Plane plane_outward_from(const linalg::vec3f& point, linalg::vec3f normal, const linalg::vec3f& inside)
 {
   normal = linalg::normalize(normal);
@@ -179,25 +214,10 @@ shadow_cast_t cast_shadow_volume(const shadow_light_t& light, Span<const Plane> 
     }
   if (corner_count < 3)
     return refused(shadow_cast_refusal_t::Silhouette_Open);
-  // The sides that cut the pyramid: a spot's cone or a projector's frame.
-  std::optional<reveal_cone_planes_t> beam;
-  Span<const Plane>                   clip_sides;
-  if (light.cosine_of_outer_angle > -1.f)
-  {
-    beam = planes_of_reveal_cone({.apex                 = light.apex,
-                                  .axis                 = light.direction,
-                                  .range                = light.range > 0.f ? light.range : FLT_MAX,
-                                  .cosine_of_half_angle = light.cosine_of_outer_angle});
-    if (!reveal_cone_touches_box(*beam, piece_bounds))
-      return refused(shadow_cast_refusal_t::Outside_Spot_Beam);
-    clip_sides = beam->sides;
-  }
-  else if (light.frame_plane_count > 0)
-  {
-    if (!projector_frame_touches_box(light, piece_bounds))
-      return refused(shadow_cast_refusal_t::Outside_Spot_Beam);
-    clip_sides = Span<const Plane>(light.frame_planes.data, light.frame_plane_count);
-  }
+  const shadow_light_clip_t clip = compute_shadow_light_clip(light);
+  if (!shadow_light_touches_box(light, clip, piece_bounds))
+    return refused(shadow_cast_refusal_t::Outside_Spot_Beam);
+  const Span<const Plane> clip_sides(clip.sides.data, clip.side_count);
   center = center * (1.f / static_cast<float>(corner_count));
 
   constexpr float MIN_DEPTH = 1e-3f;
@@ -432,192 +452,6 @@ void collect_shadow_volume_edges(const shadow_volume_t& volume, float reach, std
     }
 }
 
-std::optional<shadow_occluder_t> try_cast_shadow_occluder(const shadow_light_t& light, Span<const Plane> piece_planes,
-                                                          Span<const std::vector<linalg::vec3>> corner_polygons,
-                                                          uint32_t volume_bits, bool receives)
-{
-  if ((volume_bits & SHADOW_OCCLUDER_RECEIVES_BIT) != 0)
-    fatal_error("try_cast_shadow_occluder: volume bit 31 is the receives bit");
-  shadow_light_t unbounded = light;
-  unbounded.range          = 0.f;
-
-  std::vector<Plane>                     cut_planes;
-  std::vector<std::vector<linalg::vec3>> cut_polygons;
-  if (shadow_light_is_directed(light) && light.range > 0.f)
-  {
-    linalg::vec3f center{0.f, 0.f, 0.f};
-    float         radius       = 0.f;
-    uint32_t      corner_count = 0;
-    for (const std::vector<linalg::vec3>& polygon : corner_polygons)
-      for (const linalg::vec3& corner : polygon)
-      {
-        center = center + corner;
-        ++corner_count;
-      }
-    if (corner_count == 0)
-      return std::nullopt;
-    center = center * (1.f / static_cast<float>(corner_count));
-    for (const std::vector<linalg::vec3>& polygon : corner_polygons)
-      for (const linalg::vec3& corner : polygon)
-        radius = std::max(radius, linalg::length(corner - center));
-    cut_planes.assign(piece_planes.begin(), piece_planes.end());
-    cut_planes.push_back(*try_shadow_light_far_cap(light, center));
-    const std::optional<convex_polyhedron_t> cut = try_build_convex_from_planes(cut_planes, center, radius + 1.f);
-    if (!cut)
-      return std::nullopt;
-    cut_planes.clear();
-    for (const convex_face_t& face : cut->faces)
-    {
-      cut_planes.push_back(face.plane);
-      std::vector<linalg::vec3>& polygon = cut_polygons.emplace_back();
-      for (const uint32_t index : face.vertex_indices)
-        polygon.push_back(cut->vertices[index]);
-    }
-    piece_planes    = cut_planes;
-    corner_polygons = cut_polygons;
-  }
-
-  const shadow_cast_t cast = cast_shadow_volume(unbounded, piece_planes, corner_polygons, null_entity_uid);
-  if (cast.refusal != shadow_cast_refusal_t::None)
-    return std::nullopt;
-  shadow_occluder_t occluder{.volume_bits  = volume_bits,
-                             .receives     = receives,
-                             .light        = light.uid,
-                             .piece_bounds = cast.volume.caster_bounds};
-  for (uint32_t index = 0; index < cast.volume.side_plane_count; ++index)
-    occluder.pyramid_planes[occluder.pyramid_plane_count++] = cast.volume.side_planes[index];
-  for (const Plane& plane : piece_planes)
-  {
-    if (plane_faces_away_from_light(light, plane))
-      continue;
-    if (occluder.light_facing_plane_count == MAX_SHADOW_VOLUME_LIGHT_FACING_PLANES)
-      return std::nullopt;
-    occluder.light_facing_planes[occluder.light_facing_plane_count++] = plane;
-  }
-  return occluder;
-}
-
-std::optional<aabb_bounds_t> try_compute_drawn_shadow_body_bounds(const shadow_volume_t&        volume,
-                                                                  Span<const shadow_occluder_t> occluders,
-                                                                  uint32_t                      volume_bit)
-{
-  aabb_bounds_t box   = volume.caster_bounds;
-  bool          lands = false;
-  for (const shadow_occluder_t& occluder : occluders)
-  {
-    if (!occluder.receives || (occluder.volume_bits & volume_bit) == 0)
-      continue;
-    box   = union_aabb(box, occluder.piece_bounds);
-    lands = true;
-  }
-  if (!lands)
-    return std::nullopt;
-
-  // The silhouette's pyramid with its far cap, which holds the spot-clipped volume and so its body, cut to
-  // the box: every vertex of that cut and nothing else. Either polytope's corners inside the other, the
-  // pyramid's edges (the ray to each far corner, the cap's rim) through the box's faces, the box's edges
-  // through the pyramid's planes. The bounds of those are the cut's bounds, with nothing allocated.
-  if (volume.side_count == 0)
-    return box;
-  constexpr float TOLERANCE   = 0.5f;
-  Array<Plane, SHADOW_VOLUME_SIDE_SLOTS> planes;
-  uint32_t                               plane_count = 0;
-  for (uint32_t index = 0; index < volume.ring_plane_count; ++index)
-    planes[plane_count++] = volume.side_planes[index];
-  if (volume.has_far_cap)
-    planes[plane_count++] = volume.side_planes[volume.ring_plane_count];
-  const Span<const Plane> sides(planes.data, plane_count);
-  bool                    any    = false;
-  aabb_bounds_t           bounds = {};
-  const auto consider = [&](const linalg::vec3f& point)
-  {
-    if (point.x < box.min.x - TOLERANCE || point.x > box.max.x + TOLERANCE || point.y < box.min.y - TOLERANCE ||
-        point.y > box.max.y + TOLERANCE || point.z < box.min.z - TOLERANCE || point.z > box.max.z + TOLERANCE)
-      return;
-    for (const Plane& side : sides)
-      if (linalg::dot(side.normal, point - side.point) > TOLERANCE)
-        return;
-    bounds = any ? bounds : aabb_bounds_t{point, point};
-    expand_aabb_to_include_point(bounds, point);
-    any = true;
-  };
-  const auto consider_segment_through_box_faces = [&](const linalg::vec3f& a, const linalg::vec3f& b)
-  {
-    consider(a);
-    consider(b);
-    const linalg::vec3f along = b - a;
-    for (uint32_t axis = 0; axis < 3; ++axis)
-    {
-      if (std::abs(along[axis]) < 1e-6f)
-        continue;
-      for (const float face : {box.min[axis], box.max[axis]})
-      {
-        const float t = (face - a[axis]) / along[axis];
-        if (t >= 0.f && t <= 1.f)
-          consider(a + along * t);
-      }
-    }
-  };
-
-  const float reach = linalg::length(box.max - box.min) + 1.f;
-  for (uint32_t side = 0; side < volume.side_count; ++side)
-  {
-    const linalg::vec3f far_corner = volume.far_ring[side];
-    consider_segment_through_box_faces(
-        volume.light_directional ? volume.near_ring[side] - volume.light_direction * reach : volume.light_apex,
-        far_corner);
-    consider_segment_through_box_faces(far_corner, volume.far_ring[(side + 1) % volume.side_count]);
-  }
-
-  const linalg::vec3f corners[8] = {
-      {box.min.x, box.min.y, box.min.z}, {box.max.x, box.min.y, box.min.z}, {box.min.x, box.max.y, box.min.z},
-      {box.max.x, box.max.y, box.min.z}, {box.min.x, box.min.y, box.max.z}, {box.max.x, box.min.y, box.max.z},
-      {box.min.x, box.max.y, box.max.z}, {box.max.x, box.max.y, box.max.z}};
-  constexpr uint32_t edge_corners[12][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7}, {0, 2}, {1, 3},
-                                            {4, 6}, {5, 7}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
-  for (const linalg::vec3f& corner : corners)
-    consider(corner);
-  for (const uint32_t (&edge)[2] : edge_corners)
-  {
-    const linalg::vec3f a     = corners[edge[0]];
-    const linalg::vec3f along = corners[edge[1]] - a;
-    for (const Plane& side : sides)
-    {
-      const float per_unit = linalg::dot(side.normal, along);
-      if (std::abs(per_unit) < 1e-6f)
-        continue;
-      const float t = -linalg::dot(side.normal, a - side.point) / per_unit;
-      if (t >= 0.f && t <= 1.f)
-        consider(a + along * t);
-    }
-  }
-  return any ? std::optional<aabb_bounds_t>(bounds) : std::optional<aabb_bounds_t>(box);
-}
-
-bool shadow_occluder_pyramid_contains_point(const shadow_occluder_t& occluder, const linalg::vec3f& point)
-{
-  for (uint32_t index = 0; index < occluder.pyramid_plane_count; ++index)
-  {
-    const Plane& plane = occluder.pyramid_planes[index];
-    if (linalg::dot(point - plane.point, plane.normal) > 0.f)
-      return false;
-  }
-  return true;
-}
-
-bool shadow_occluder_is_behind_point(const shadow_occluder_t& occluder, const linalg::vec3f& point)
-{
-  if (!shadow_occluder_pyramid_contains_point(occluder, point))
-    return false;
-  for (uint32_t index = 0; index < occluder.light_facing_plane_count; ++index)
-  {
-    const Plane& plane = occluder.light_facing_planes[index];
-    if (linalg::dot(point - plane.point, plane.normal) > 0.f)
-      return false;
-  }
-  return true;
-}
-
 bool shadow_volume_contains_point(const shadow_volume_t& volume, const linalg::vec3f& point)
 {
   for (uint32_t index = 0; index < volume.side_plane_count; ++index)
@@ -832,7 +666,7 @@ struct visited_piece_t
   aabb_bounds_t                         bounds;
   Span<const Plane>                     planes;
   Span<const std::vector<linalg::vec3>> polygons;
-  // A player's piece: cast into the solid_shadows lights alone, and no occluder of a drawn body.
+  // A player's piece: cast into the solid_shadows lights alone.
   bool                                  casts_only_into_solid_shadows = false;
 };
 
@@ -893,6 +727,10 @@ shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const
 
   const std::vector<shadow_light_t> lights  = gather_shadow_lights(system, movers, rests);
   report.cutting_lights                     = static_cast<uint32_t>(lights.size());
+  std::vector<shadow_light_clip_t> clips;
+  clips.reserve(lights.size());
+  for (const shadow_light_t& light : lights)
+    clips.push_back(compute_shadow_light_clip(light));
   const std::vector<piece_role_t>   role_of = resolve_piece_roles(system, owner_of);
 
   // Keyed as for_each_shadow_piece keys the static pieces, so an erased caster can leave itself out.
@@ -955,7 +793,6 @@ shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const
     {
       ++report.cast;
       volume.caster_piece   = piece.key;
-      volume.drawn_by_march = piece.casts_only_into_solid_shadows;
       if (volume.solid_shadows == entities::Solid_Shadows::Solid_From_Lens_To_Shadow &&
           piece.role != piece_role_t::Casts_From_Lens)
         volume.solid_shadows = entities::Solid_Shadows::Shadow_Volumes_Only;
@@ -976,6 +813,7 @@ shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const
     }
   };
 
+  // Not cached (todo.md): a static piece under a still light recasts every cut; a per-light memo is the easy gain.
   uint32_t next_key = 0;
   for_each_shadow_piece(system, bvh, owner_of, role_of, movers, player_casters, [&](const visited_piece_t& piece)
   {
@@ -986,9 +824,18 @@ shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const
       ++report.player_pieces;
     else
       ++report.caster_pieces;
-    for (const shadow_light_t& light : lights)
-      if (light.solid_shadows != entities::Solid_Shadows::None || !piece.casts_only_into_solid_shadows)
-        cast_piece_into(light, piece);
+    for (size_t index = 0; index < lights.size(); ++index)
+    {
+      const shadow_light_t& light = lights[index];
+      if (light.solid_shadows == entities::Solid_Shadows::None && piece.casts_only_into_solid_shadows)
+        continue;
+      if (!shadow_light_touches_box(light, clips[index], piece.bounds))
+      {
+        ++report.refused_outside_beam;
+        continue;
+      }
+      cast_piece_into(light, piece);
+    }
   });
 
   // The dark of each projector's picture, as pieces on its glass, cast into that projector alone: a piece on
@@ -1038,48 +885,6 @@ shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const
     *(first_drawn_only + index) = dealt[order[index]];
   report.kept = static_cast<uint32_t>(out.size());
   return report;
-}
-
-uint32_t collect_shadow_occluders(const Entity_System& system, const Bounding_Volume_Hierarchy& bvh,
-                                  Span<const entity_uid_t> owner_of, Span<const mover_t> movers,
-                                  const mover_rests_t& rests, Span<const shadow_volume_t> drawn,
-                                  std::vector<shadow_occluder_t>& out)
-{
-  out.clear();
-  if (drawn.size() > 31)
-    fatal_error("collect_shadow_occluders: {} drawn volumes, but volume_bits holds 31", drawn.size());
-  if (drawn.empty())
-    return 0;
-
-  const std::vector<shadow_light_t> lights  = gather_shadow_lights(system, movers, rests);
-  const std::vector<piece_role_t>   role_of = resolve_piece_roles(system, owner_of);
-  uint32_t                          skipped = 0;
-
-  for_each_shadow_piece(system, bvh, owner_of, role_of, movers, {}, [&](const visited_piece_t& piece)
-  {
-    if (piece.role == piece_role_t::Nothing)
-      return;
-    for (const shadow_light_t& light : lights)
-    {
-      uint32_t bits = 0;
-      for (uint32_t index = 0; index < drawn.size(); ++index)
-      {
-        const shadow_volume_t& volume = drawn[index];
-        if (volume.light != light.uid || volume.caster_piece == piece.key)
-          continue;
-        if (shadow_volume_touches_box(volume, piece.bounds))
-          bits |= 1u << index;
-      }
-      if (bits == 0)
-        continue;
-      if (const std::optional<shadow_occluder_t> occluder = try_cast_shadow_occluder(
-              light, piece.planes, piece.polygons, bits, piece_role_receives(piece.role) || light.solid_shadows != entities::Solid_Shadows::None))
-        out.push_back(*occluder);
-      else
-        ++skipped;
-    }
-  });
-  return skipped;
 }
 
 } // namespace shared

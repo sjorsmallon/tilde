@@ -492,10 +492,6 @@ struct visual_effects_t
   // The lens watchers that tick was held by, own eye from the prediction, copied for the same reason:
   // a lens_watched draw keeps what those eyes hold solid.
   std::vector<shared::lens_watcher_t>  drawn_lens_watchers;
-  // What those volumes are drawn up to, for the first renderer::MAX_SCENE_SHADOW_VOLUMES of them, and how
-  // many pieces outran the plane slots (shadow_volume_plan.md ss5).
-  std::vector<shared::shadow_occluder_t> drawn_shadow_occluders;
-  uint32_t                               drawn_shadow_occluders_skipped = 0;
   // One per player held by a solid shadow this frame (shared/lighting/support_planks.hpp).
   std::vector<shared::support_plank_t>   drawn_support_planks;
   // The same cut's counts, and the line cl_shadow_volume_debug last printed for them.

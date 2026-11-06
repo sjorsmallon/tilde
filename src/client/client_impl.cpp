@@ -110,9 +110,11 @@ constexpr look_row_t LOOK_ROWS[] = {
     {"Beam", cvars::cvar_id::r_beam_fill},
     {"Beam", cvars::cvar_id::r_beam_dot_spacing, 2.0f, 32.0f},
     {"Beam", cvars::cvar_id::r_beam_edge_pixels, 0.0f, 8.0f},
-    {"Beam", cvars::cvar_id::r_shadow_volume},
-    {"Beam", cvars::cvar_id::r_shadow_volume_alpha, 0.0f, 1.0f},
-    {"Beam", cvars::cvar_id::r_shadow_volume_march_steps, 1.0f, 128.0f},
+    {"Cel", cvars::cvar_id::r_solid_shadow_edge},
+    {"Cel", cvars::cvar_id::r_solid_shadow_fill, 0.0f, 1.0f},
+    {"Cel", cvars::cvar_id::r_solid_shadow_red, 0.0f, 1.0f},
+    {"Cel", cvars::cvar_id::r_solid_shadow_green, 0.0f, 1.0f},
+    {"Cel", cvars::cvar_id::r_solid_shadow_blue, 0.0f, 1.0f},
     {"Cel", cvars::cvar_id::r_cel},
     {"Cel", cvars::cvar_id::r_cel_terminator},
     {"Cel", cvars::cvar_id::r_cel_shadow_edge},
@@ -748,12 +750,9 @@ bool Tick()
     look.beam_fill               = cvars.r_beam_fill;
     look.beam_dot_spacing_pixels = cvars.r_beam_dot_spacing;
     look.beam_edge_pixels        = cvars.r_beam_edge_pixels;
-    look.shadow_volume           = cvars.r_shadow_volume;
-    look.shadow_volume_alpha     = cvars.r_shadow_volume_alpha;
-    look.shadow_volume_color     = {cvars.r_shadow_volume_red, cvars.r_shadow_volume_green,
-                                    cvars.r_shadow_volume_blue};
-    look.shadow_volume_edge_tint = cvars.r_shadow_volume_edge_tint;
-    look.shadow_volume_march_steps = cvars.r_shadow_volume_march_steps;
+    look.solid_shadow_edge       = cvars.r_solid_shadow_edge;
+    look.solid_shadow_fill       = cvars.r_solid_shadow_fill;
+    look.solid_shadow_color      = {cvars.r_solid_shadow_red, cvars.r_solid_shadow_green, cvars.r_solid_shadow_blue};
     look.shadow_plank            = cvars.r_shadow_plank;
     look.misprint_pixels   = cvars.r_stylized ? cvars.r_misprint : 0.0f;
     look.misprint_distance = cvars.r_misprint_distance;

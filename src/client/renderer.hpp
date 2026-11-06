@@ -412,15 +412,9 @@ inline constexpr uint32_t MAX_SCENE_LENS_WATCHERS = 16;
 // scene.glsl's MAX_FOG_VOLUMES, kept one number by the same assert.
 inline constexpr uint32_t MAX_SCENE_FOG_VOLUMES = 8;
 
-// scene.glsl's MAX_SHADOW_VOLUMES, kept one number by the same assert. A multiple of four: the
-// volumes' light uids ride the scene block four to a vec4.
-inline constexpr uint32_t MAX_SCENE_SHADOW_VOLUMES = 24;
-static_assert(MAX_SCENE_SHADOW_VOLUMES % 4 == 0);
-// An occluder names the volumes it touches by bit; bit 31 is its SHADOW_OCCLUDER_RECEIVES_BIT.
-static_assert(MAX_SCENE_SHADOW_VOLUMES < 31);
-// What the drawn volumes are drawn up to (shadow_volume_plan.md ss5); the tail past this is dropped and logged.
-inline constexpr uint32_t MAX_SCENE_SHADOW_OCCLUDERS = 16;
-static_assert(MAX_SCENE_SHADOW_OCCLUDERS % 4 == 0);
+// The most shadow volumes one view pass carries for reveal.glsl's cuts (shadow_volume_plan.md ss5): what
+// renderer/shadow_volumes.cpp's storage holds per pass. The tail past it is dropped and logged.
+inline constexpr uint32_t MAX_SCENE_SHADOW_VOLUMES = 256;
 
 // scene.glsl's MAX_BEAMS, kept one number by the same assert.
 inline constexpr uint32_t MAX_SCENE_BEAMS = 8;
@@ -637,8 +631,6 @@ struct view_pass_t
   // here: it is a property of the world being drawn, not of any surface in it.
   // Invalid draws no sky at all and leaves the scene clear showing through.
   skybox_handle_t                           sky       = {};
-  // What a drawn shadow volume's body shows, sampled by the line of sight as the sky is. Invalid is the black wash.
-  skybox_handle_t                           shadow_fill = {};
   // Already folded by shared::try_convert_light_entity_to_scene_light, and LAID OUT: the first
   // `baked_light_count` entries are INDEXED BY BAKED SLOT, so a lightmapped
   // surface reads the four its chart named and never walks the array. Past
@@ -662,7 +654,6 @@ struct view_pass_t
   Span<const shared::reveal_cone_t>         reveal_cones = {};
   // Where a shadow_solid draw exists and a shadow_hole one does not (shared/shadow_volume.hpp).
   Span<const shared::shadow_volume_t>       shadow_volumes = {};
-  Span<const shared::shadow_occluder_t>     shadow_occluders = {};
   // Drawn for the FIRST perspective pass of the frame that carries any: there is one fog grid.
   Span<const fog_volume_t>                  fog_volumes = {};
   // Where a lens_* draw exists (shared/lens.hpp). Past MAX_SCENE_LENSES the tail is dropped.
@@ -770,12 +761,10 @@ struct look_settings_t
   cvars::Beam_Fill beam_fill      = cvars::Beam_Fill::tint; // r_beam_fill
   float   beam_dot_spacing_pixels = 8.0f;  // r_beam_dot_spacing
   float   beam_edge_pixels        = 2.0f;  // r_beam_edge_pixels
-  bool    shadow_volume           = true;  // r_shadow_volume
-  float   shadow_volume_alpha     = 0.25f; // r_shadow_volume_alpha
-  linalg::vec3f shadow_volume_color = {0.0f, 0.0f, 0.0f}; // r_shadow_volume_red, _green, _blue
-  float   shadow_volume_edge_tint = 0.0f;  // r_shadow_volume_edge_tint
-  int32_t shadow_volume_march_steps = 24;  // r_shadow_volume_march_steps
-  bool    shadow_plank            = true;  // r_shadow_plank: a from-the-lens or player volume draws no body
+  bool    solid_shadow_edge       = true;  // r_solid_shadow_edge
+  float   solid_shadow_fill       = 1.0f;  // r_solid_shadow_fill
+  linalg::vec3f solid_shadow_color = {0.10f, 0.08f, 0.16f}; // r_solid_shadow_red, _green, _blue
+  bool    shadow_plank            = true;  // r_shadow_plank
 };
 
 struct antialiasing_settings_t

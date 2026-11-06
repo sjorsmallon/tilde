@@ -252,6 +252,7 @@ entity
   "lens_filter" "Red"
   "solid_only_when_lensed" "false"
   "casts_dynamic_shadow" "false"
+  "casts_solid_from_lens" "false"
 }
 entity
 {

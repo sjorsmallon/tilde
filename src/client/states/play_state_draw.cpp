@@ -433,9 +433,9 @@ void Play_State::draw_support_planks(client_context_t &ctx, const draw_inputs_t 
   shared::compute_support_planks(supported, ctx.visuals.drawn_shadow_volumes, ctx.world.session.bvh,
                                  ctx.visuals.drawn_support_planks);
 
-  const color_t edge = {(uint8_t)std::clamp(ctx.cvars->r_shadow_volume_red * 255.f, 0.f, 255.f),
-                        (uint8_t)std::clamp(ctx.cvars->r_shadow_volume_green * 255.f, 0.f, 255.f),
-                        (uint8_t)std::clamp(ctx.cvars->r_shadow_volume_blue * 255.f, 0.f, 255.f), 255};
+  const color_t edge = {(uint8_t)std::clamp(ctx.cvars->r_solid_shadow_red * 255.f, 0.f, 255.f),
+                        (uint8_t)std::clamp(ctx.cvars->r_solid_shadow_green * 255.f, 0.f, 255.f),
+                        (uint8_t)std::clamp(ctx.cvars->r_solid_shadow_blue * 255.f, 0.f, 255.f), 255};
   const color_t fill = with_alpha(edge, (uint8_t)std::clamp(ctx.cvars->r_shadow_plank_alpha * 255.f, 0.f, 255.f));
   for (const shared::support_plank_t& plank : ctx.visuals.drawn_support_planks)
   {
@@ -452,8 +452,7 @@ void Play_State::draw_shadow_debug_and_volumes(client_context_t &ctx, const draw
 
   scene.ripples = ctx.visuals.wall_ripples.ripples;
   scene.beam_ripples = ctx.visuals.beam_ripples.ripples;
-  scene.shadow_volumes   = ctx.visuals.drawn_shadow_volumes;
-  scene.shadow_occluders = ctx.visuals.drawn_shadow_occluders;
+  scene.shadow_volumes = ctx.visuals.drawn_shadow_volumes;
   if (ctx.cvars->r_shadow_plank)
     draw_support_planks(ctx, frame);
   if (ctx.cvars->cl_shadow_volume_debug)
@@ -462,19 +461,13 @@ void Play_State::draw_shadow_debug_and_volumes(client_context_t &ctx, const draw
     const shared::shadow_volume_report_t& report = ctx.visuals.drawn_shadow_volume_report;
     std::string line = std::format(
         "shadow volumes: lights {} receivers {} casters {} cast {} kept {}{} | refused: inside caster {} open "
-        "silhouette {} on silhouette {} too many planes {} outside beam {} reaching nothing {} | occluders {}{} "
-        "skipped {} | caster/light:",
+        "silhouette {} on silhouette {} too many planes {} outside beam {} reaching nothing {} | caster/light:",
         report.cutting_lights, report.receiver_pieces, report.caster_pieces, report.cast, report.kept,
         report.kept > renderer::MAX_SCENE_SHADOW_VOLUMES
-            ? std::format(" (ONLY {} DRAWN)", renderer::MAX_SCENE_SHADOW_VOLUMES)
+            ? std::format(" (ONLY {} REACH THE CUT DRAWS)", renderer::MAX_SCENE_SHADOW_VOLUMES)
             : std::string{},
         report.refused_inside_caster, report.refused_open_silhouette, report.refused_on_silhouette,
-        report.refused_too_many_planes, report.refused_outside_beam,
-        report.culled_reaching_nothing, ctx.visuals.drawn_shadow_occluders.size(),
-        ctx.visuals.drawn_shadow_occluders.size() > renderer::MAX_SCENE_SHADOW_OCCLUDERS
-            ? std::format(" (ONLY {} USED)", renderer::MAX_SCENE_SHADOW_OCCLUDERS)
-            : std::string{},
-        ctx.visuals.drawn_shadow_occluders_skipped);
+        report.refused_too_many_planes, report.refused_outside_beam, report.culled_reaching_nothing);
     for (const shared::shadow_volume_t& volume : ctx.visuals.drawn_shadow_volumes)
       line += std::format(" {}/{}", volume.caster, volume.light);
     for (const shared::refused_piece_t& refused : report.refused)
@@ -513,9 +506,7 @@ void Play_State::draw_shadow_debug_and_volumes(client_context_t &ctx, const draw
       shared::collect_shadow_volume_edges(volume, shared::SHADOW_VOLUME_DRAWN_REACH, edges);
       for (const shared::shadow_volume_edge_t& edge : edges)
         scene.debug.line(edge.a, edge.b, color, 0.f, 0.f, true);
-      const std::string label = volume_index < renderer::MAX_SCENE_SHADOW_VOLUMES
-                                    ? std::format("volume {}: caster {} / light {}", volume_index, volume.caster, volume.light)
-                                    : std::format("NOT DRAWN: caster {} / light {}", volume.caster, volume.light);
+      const std::string label = std::format("volume {}: caster {} / light {}", volume_index, volume.caster, volume.light);
       scene.debug.text(get_aabb_center(volume.caster_bounds), label.c_str(), color);
     }
   }
@@ -1371,7 +1362,6 @@ void Play_State::draw(float delta_seconds, std::vector<renderer::view_pass_t> &p
 
   lap.next("draw: sky, grabbed frames, to_pass");
   scene.sky         = skybox.resolve(ctx.cvars->sv_skybox.c_str());
-  scene.shadow_fill = shadow_fill.resolve(ctx.cvars->sv_shadow_fill.c_str());
 
   place_grabbed_frames();
 

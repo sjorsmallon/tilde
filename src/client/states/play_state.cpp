@@ -2340,13 +2340,6 @@ void Play_State::update(float dt)
     for (const shared::mover_t& mover : frame.predicted_world_storage.movers)
       if (entities::entity_as<entities::Spot_Light_Entity>(ctx.world.session.entity_system.try_find(mover.uid)) != nullptr)
         ctx.visuals.drawn_solid_beams.push_back(mover);
-  ctx.visuals.drawn_shadow_occluders_skipped = shared::collect_shadow_occluders(
-      ctx.world.session.entity_system, ctx.world.session.bvh, ctx.world.session.owner_of,
-      frame.predicted_world_storage.movers, ctx.world.session.mover_rests,
-      Span<const shared::shadow_volume_t>(
-          ctx.visuals.drawn_shadow_volumes.data(),
-          static_cast<uint32_t>(std::min<size_t>(ctx.visuals.drawn_shadow_volumes.size(), renderer::MAX_SCENE_SHADOW_VOLUMES))),
-      ctx.visuals.drawn_shadow_occluders);
   follow_pilot_flight(ctx);
   play_local_movement_sounds(ctx, frame);
 

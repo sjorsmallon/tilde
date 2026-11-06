@@ -112,14 +112,6 @@ const uint32_t beam_frag_spv[] =
 #include "beam.frag.spv.h"
     ;
 
-const uint32_t shadow_body_vert_spv[] =
-#include "shadow_body.vert.spv.h"
-    ;
-
-const uint32_t shadow_body_frag_spv[] =
-#include "shadow_body.frag.spv.h"
-    ;
-
 const uint32_t mesh_grid_frag_spv[] =
 #include "mesh_grid.frag.spv.h"
     ;
@@ -401,10 +393,14 @@ constexpr uint32_t PASS_IMAGE_BINDING_COUNT = 10;
 // The images the renderer owns and binds beside them: each shadow pool twice,
 // the BRDF table once, the Dither3D pattern and its ramp, the projector pictures.
 constexpr uint32_t PASS_RENDERER_IMAGE_BINDING_COUNT = 8;
-// The lightmap images, the scene block, the renderer's three images and the
-// capture table.
+// The shadow volumes the pass carries, as planes (renderer/shadow_volumes.cpp, shadow_volume_data.glsl):
+// one storage buffer.
+constexpr uint32_t PASS_SHADOW_VOLUME_RECORDS_BINDING = 20;
+constexpr uint32_t PASS_SHADOW_VOLUME_BINDING_COUNT   = 1;
+// The lightmap images, the scene block, the renderer's three images, the
+// capture table and the shadow volume storage.
 constexpr uint32_t PASS_BINDING_COUNT =
-    PASS_IMAGE_BINDING_COUNT + PASS_RENDERER_IMAGE_BINDING_COUNT + 2;
+    PASS_IMAGE_BINDING_COUNT + PASS_RENDERER_IMAGE_BINDING_COUNT + 2 + PASS_SHADOW_VOLUME_BINDING_COUNT;
 
 // A capture is six layers of the cube array, so the cap is what keeps the
 // array under Vulkan's 2048-layer floor with room to spare, and it is loud:
@@ -686,6 +682,7 @@ struct gpu_light_t
   float radiance[4];    // rgb, already through shared/lighting.hpp's compute_radiance;
                         // w = shadow layer or -1 (direct_light.glsl's LIGHT_SHADOW_LAYER)
   float spot_params[4]; // cos(inner), cos(outer), range, type
+  float flags[4];       // x = 1 when the light's shadows are solid (light_arrival.glsl's LIGHT_SOLID_SHADOWS)
 };
 
 // Matches MAX_LIGHTS in scene.glsl; the size assert below is what catches a drift.
@@ -694,19 +691,12 @@ struct gpu_light_t
 // paid for it is that NOBODY LOOPS IT. The array's head is indexed by baked slot,
 // so a lightmapped fragment reads the four its chart kept and a surface with no
 // chart reads only the tail past `baked_light_count`. The cost is the UBO: 64
-// lights is 4KB, comfortably inside the 16KB maxUniformBufferRange floor.
+// lights is 5KB, comfortably inside the 16KB maxUniformBufferRange floor.
 constexpr uint32_t MAX_SCENE_LIGHTS = 64;
 // scene.glsl's MAX_RIPPLES; the size assert below keeps the two one number.
 constexpr uint32_t MAX_SCENE_RIPPLES = 16;
 // scene.glsl's MAX_BEAM_RIPPLES, kept one number by the same assert.
 constexpr uint32_t MAX_SCENE_BEAM_RIPPLES = 4;
-// Bit 16 of a volume's packed counts, above the two byte-wide plane counts: scene.glsl's shadow_volume_cuts_geometry.
-constexpr uint32_t SCENE_SHADOW_VOLUME_CUTS_GEOMETRY_BIT = 1u << 16;
-// Bit 17: scene.glsl's shadow_volume_is_marched; the top byte its light's index in `lights`, 0xff for none.
-constexpr uint32_t SCENE_SHADOW_VOLUME_MARCHED_BIT       = 1u << 17;
-constexpr uint32_t SCENE_SHADOW_VOLUME_LIGHT_INDEX_SHIFT = 24;
-constexpr uint32_t SCENE_SHADOW_VOLUME_NO_LIGHT_INDEX    = 0xffu;
-static_assert(MAX_SCENE_LIGHTS < SCENE_SHADOW_VOLUME_NO_LIGHT_INDEX);
 
 // std140, so the two pads land the light array on a 16-byte boundary.
 struct scene_uniform_t
@@ -775,18 +765,11 @@ struct scene_uniform_t
   float       beam_planes[MAX_SCENE_BEAM_PLANES][4]         = {}; // a carved piece's cut planes as the volumes' planes: outward normal xyz and dot(normal, point)
   float       beam_ripple_settings[4]                       = {}; // x how many of `beam_ripples` are live, y the age one is dropped at
   float       beam_ripples[MAX_SCENE_BEAM_RIPPLES][8]       = {}; // where a player landed xyz and how long ago, then the beam's light uid bits and three spare
-  float       shadow_volume_lights[MAX_SCENE_SHADOW_VOLUMES / 4][4] = {}; // volume v's light uid bits at [v / 4][v % 4]
-  float       shadow_volume_counts[MAX_SCENE_SHADOW_VOLUMES / 4][4] = {}; // volume v's side plane count | front plane count << 8 | cuts_geometry << 16 | drawn_by_march << 17 | its light's index in `lights` << 24 (0xff for none), as float bits, at [v / 4][v % 4]
-  float       shadow_volume_boxes[MAX_SCENE_SHADOW_VOLUMES][8]      = {}; // the box around drawn volume v's body, min xyz then max xyz; shadow_body.vert draws it
+  float       shadow_volume_storage[4]                      = {}; // x where this pass's records start in renderer/shadow_volumes.cpp's storage
   float       reveal_settings[4]                           = {}; // x how many of `reveal_cones` reveal, from the first; y how many erase, after those
   float       reveal_cones[MAX_SCENE_REVEAL_CONES][8]       = {}; // apex xyz and range, then axis xyz and the cosine of the half-angle
-  float       shadow_volume_settings[4]                     = {}; // x how many of `shadow_volumes` are live, y r_shadow_volume_alpha, z 1 when the volumes are drawn, w how many of `shadow_occluders` are live
-  float       shadow_volume_color[4]                        = {}; // xyz the colour a drawn volume's body is filled with, w how much of it the line and rim keep
-  float       shadow_volume_fill[4]                         = {}; // x 1 when the pass names a fill cubemap, which the body then shows by line of sight instead of the colour, y r_shadow_volume_march_steps
-  float       shadow_volumes[MAX_SCENE_SHADOW_VOLUMES][4 * shared::MAX_SHADOW_VOLUME_PLANES] = {}; // planes as normal xyz and dot(normal, point), side slots then back slots; an unused one is (0, 0, 0, 1e9)
-  float       shadow_occluder_bits[MAX_SCENE_SHADOW_OCCLUDERS / 4][4] = {}; // occluder o's volume_bits, bit 31 its receives, at [o / 4][o % 4], as float bits
-  float       shadow_occluder_counts[MAX_SCENE_SHADOW_OCCLUDERS / 4][4] = {}; // occluder o's pyramid plane count | front plane count << 8, as float bits
-  float       shadow_occluders[MAX_SCENE_SHADOW_OCCLUDERS][4 * shared::MAX_SHADOW_VOLUME_PLANES] = {}; // planes as the volumes': pyramid planes in the side slots, the piece's lit faces in the back slots
+  float       shadow_volume_settings[4]                     = {}; // x how many shadow volumes the pass carries, for reveal.glsl's cuts
+  float       solid_shadow_fill[4]                          = {}; // xyz the flat colour a solid light's shadow is filled with where it lands, w how much of it covers the shading (r_solid_shadow_fill)
   float       fog_settings[4]                               = {}; // x how many of `fog_volumes` are live, y the view depth the fog grid starts at, z where it ends, w anisotropy
   float       view_right[4]                                 = {}; // the camera's right, as long as half the view is wide one unit of view depth away
   float       view_up[4]                                    = {}; // the camera's up, as long as half the view is tall
@@ -798,15 +781,12 @@ struct scene_uniform_t
 };
 
 static_assert(sizeof(scene_uniform_t) ==
-                  144 + 64 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 96 + 16 +
+                  144 + 80 * MAX_SCENE_LIGHTS + (64 + 16) * MAX_SHADOW_LAYERS + 96 + 16 +
                       32 * MAX_SCENE_RIPPLES + 16 + 160 + 64 + 16 + 16 + 16 + 32 + (64 + 32) * MAX_SCENE_BEAMS +
                       4 * MAX_SCENE_BEAM_PIECES + 16 * MAX_SCENE_BEAM_PLANES +
                       16 + 32 * MAX_SCENE_BEAM_RIPPLES +
-                      8 * MAX_SCENE_SHADOW_VOLUMES + 32 * MAX_SCENE_SHADOW_VOLUMES +
-                      32 * MAX_SCENE_REVEAL_CONES + 16 + 32 +
-                      16 * shared::MAX_SHADOW_VOLUME_PLANES * MAX_SCENE_SHADOW_VOLUMES +
-                      8 * MAX_SCENE_SHADOW_OCCLUDERS +
-                      16 * shared::MAX_SHADOW_VOLUME_PLANES * MAX_SCENE_SHADOW_OCCLUDERS + 48 +
+                      16 +
+                      32 * MAX_SCENE_REVEAL_CONES + 16 + 32 + 32 +
                       48 * MAX_SCENE_FOG_VOLUMES + 16 + 48 * MAX_SCENE_LENSES + 16 + 80 * MAX_SCENE_LENS_WATCHERS,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
@@ -948,20 +928,13 @@ VkRenderPass g_scene_render_pass             = VK_NULL_HANDLE;
 static VkRenderPass g_tonemapped_render_pass = VK_NULL_HANDLE;
 static VkRenderPass g_present_render_pass    = VK_NULL_HANDLE;
 
-// The beam pass (spot_beam_plan.md ss4): beam.frag and shadow_body.frag over the HDR target after the scene
-// pass, with the scene depth as a texture, which no fragment of the scene pass itself could read. Each draw
-// covers the box around one beam's cone or one volume's body (box_corner.glsl), an instance per box. Its
-// framebuffers are the HDR target's images under this pass's own attachment description.
+// The beam pass (spot_beam_plan.md ss4): beam.frag over the HDR target after the scene pass, with the scene
+// depth as a texture, which no fragment of the scene pass itself could read. Each draw covers the box around
+// one beam's cone (box_corner.glsl), an instance per box. Its framebuffers are the HDR target's images under
+// this pass's own attachment description.
 static VkRenderPass      g_beam_render_pass                       = VK_NULL_HANDLE;
 static VkFramebuffer     g_beam_framebuffers[MAX_FRAMES_IN_FLIGHT] = {};
 static fullscreen_draw_t g_beam_draw;
-static fullscreen_draw_t g_shadow_body_draw;
-// The body draw's second input: the pass's shadow fill cubemap, or this black cube when it names none.
-// Written per frame in flight by comparison, so a changed fill is rewritten before the frame binds it.
-static gpu_texture_t     g_black_cubemap;
-static skybox_handle_t   g_shadow_fill_written[MAX_FRAMES_IN_FLIGHT] = {};
-static void              create_black_cubemap();
-static void              write_shadow_body_inputs(int frame, const gpu_texture_t& fill);
 constexpr uint32_t       BOX_VERTEX_COUNT = 36;
 
 // The selection outline: a per-frame mask the outlined draws render into after the
@@ -2670,6 +2643,7 @@ static void create_mesh_resources()
   }
 
   create_scene_uniform_buffer();
+  create_shadow_volume_storage();
 
   // A layout of its own: the atlas is a sampler2DArray, and a set allocated
   // against the sampler2D layout above reads garbage at the draw.
@@ -2747,7 +2721,14 @@ static void create_mesh_resources()
   pass_bindings[19].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   pass_bindings[19].descriptorCount = 1;
   pass_bindings[19].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
-  static_assert(PASS_BINDING_COUNT == 20, "the pass bindings above are written out by index");
+  for (uint32_t storage = 0; storage < PASS_SHADOW_VOLUME_BINDING_COUNT; ++storage)
+  {
+    pass_bindings[20 + storage].binding         = PASS_SHADOW_VOLUME_RECORDS_BINDING + storage;
+    pass_bindings[20 + storage].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    pass_bindings[20 + storage].descriptorCount = 1;
+    pass_bindings[20 + storage].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+  }
+  static_assert(PASS_BINDING_COUNT == 21, "the pass bindings above are written out by index");
 
   VkDescriptorSetLayoutCreateInfo pass_ds_layout_info{
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -2766,7 +2747,7 @@ static void create_mesh_resources()
       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
        MAX_LIGHTMAP_ATLASES * (PASS_IMAGE_BINDING_COUNT + PASS_RENDERER_IMAGE_BINDING_COUNT)},
       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, MAX_LIGHTMAP_ATLASES},
-      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_LIGHTMAP_ATLASES}};
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_LIGHTMAP_ATLASES * (1 + PASS_SHADOW_VOLUME_BINDING_COUNT)}};
   VkDescriptorPoolCreateInfo pass_pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
   pass_pool_info.maxSets       = MAX_LIGHTMAP_ATLASES;
   pass_pool_info.poolSizeCount = 3;
@@ -2881,7 +2862,7 @@ struct fullscreen_draw_settings_t
 {
   const char*          name               = "";
   Span<const uint32_t> fragment_code      = {};
-  // Empty is tonemap.vert's covering triangle; a draw over its own geometry (shadow_body.vert) names its own.
+  // Empty is tonemap.vert's covering triangle; a draw over its own geometry (beam.vert) names its own.
   Span<const uint32_t> vertex_code        = {};
   VkCullModeFlags      cull_mode          = VK_CULL_MODE_NONE;
   VkRenderPass         render_pass        = VK_NULL_HANDLE;
@@ -3547,6 +3528,7 @@ struct tonemap_push_constants_t
   float lens_view_red             = 1.0f;
   float lens_view_green           = 1.0f;
   float lens_view_blue            = 1.0f;
+  float solid_shadow_edge         = 0.0f;
 };
 
 static fullscreen_draw_t g_tonemap_draw;
@@ -3595,25 +3577,10 @@ static void create_beam_resources()
   settings.alpha_blend    = true;
   settings.binds_pass_set = true;
   g_beam_draw             = create_fullscreen_draw(settings);
-
-  settings.name          = "shadow body";
-  settings.fragment_code = shadow_body_frag_spv;
-  settings.vertex_code   = shadow_body_vert_spv;
-  settings.input_count   = 2; // the scene depth, the shadow fill cubemap
-  g_shadow_body_draw     = create_fullscreen_draw(settings);
-}
-
-static void write_shadow_body_inputs(int frame, const gpu_texture_t& fill)
-{
-  const VkDescriptorImageInfo inputs[] = {
-      {g_screen_nearest_sampler, g_depth_view, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL},
-      {fill.sampler, fill.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
-  write_fullscreen_draw_inputs(g_shadow_body_draw, frame, inputs);
 }
 
 static void destroy_beam_resources()
 {
-  destroy_fullscreen_draw(g_shadow_body_draw);
   destroy_fullscreen_draw(g_beam_draw);
 }
 
@@ -3829,8 +3796,6 @@ static void write_screen_target_inputs()
     const VkDescriptorImageInfo beam_inputs[] = {
         {g_screen_nearest_sampler, g_depth_view, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL}};
     write_fullscreen_draw_inputs(g_beam_draw, frame, beam_inputs);
-    write_shadow_body_inputs(frame, g_black_cubemap);
-    g_shadow_fill_written[frame] = {};
 
     const VkDescriptorImageInfo fxaa_inputs[] = {
         {g_screen_linear_sampler, g_tonemapped_target.views[frame],
@@ -4699,7 +4664,18 @@ static VkDescriptorSet allocate_pass_descriptor_set(const gpu_lightmap_t &entry)
   scene_write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
   scene_write.pBufferInfo     = &scene;
 
-  vkUpdateDescriptorSets(g_device, 1, &scene_write, 0, nullptr);
+  static_assert(PASS_SHADOW_VOLUME_BINDING_COUNT == 1, "one storage write below");
+  const VkDescriptorBufferInfo storage = get_shadow_volume_storage_descriptor();
+  Array<VkWriteDescriptorSet, 2> writes{};
+  writes[0]                 = scene_write;
+  writes[1]                 = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+  writes[1].dstSet          = set;
+  writes[1].dstBinding      = PASS_SHADOW_VOLUME_RECORDS_BINDING;
+  writes[1].descriptorCount = 1;
+  writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  writes[1].pBufferInfo     = &storage;
+
+  vkUpdateDescriptorSets(g_device, writes.size(), writes.data, 0, nullptr);
   return set;
 }
 
@@ -5047,7 +5023,6 @@ static void destroy_skybox_resources()
   for (gpu_skybox_t &sky : g_skyboxes)
     destroy_texture(sky.texture);
   g_skyboxes.clear();
-  destroy_texture(g_black_cubemap);
 
   if (g_skybox_pipeline)
     vkDestroyPipeline(g_device, g_skybox_pipeline, nullptr);
@@ -5057,18 +5032,6 @@ static void destroy_skybox_resources()
     vkDestroyDescriptorPool(g_device, g_skybox_pool, nullptr);
   if (g_skybox_ds_layout)
     vkDestroyDescriptorSetLayout(g_device, g_skybox_ds_layout, nullptr);
-}
-
-static void create_black_cubemap()
-{
-  const uint8_t black[4 * assets::CUBEMAP_FACE_COUNT] = {};
-  bool          filter_linear                         = false;
-  if (!try_check_sampled_format(SKYBOX_FACE_FORMAT, "black cubemap", filter_linear) ||
-      !try_upload_sampled_image(black, sizeof(black), SKYBOX_FACE_FORMAT, filter_linear,
-                                VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_IMAGE_TYPE_2D,
-                                VK_IMAGE_VIEW_TYPE_CUBE, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, {1, 1, 1},
-                                (uint32_t)assets::CUBEMAP_FACE_COUNT, g_black_cubemap))
-    fatal_error("[renderer] could not upload the black cubemap");
 }
 
 skybox_handle_t register_skybox(assets::cubemap_asset id)
@@ -6929,6 +6892,7 @@ static void cleanup_registered_resources()
   if (g_pass_pool)            vkDestroyDescriptorPool(g_device, g_pass_pool, nullptr);
   if (g_pass_ds_layout)       vkDestroyDescriptorSetLayout(g_device, g_pass_ds_layout, nullptr);
 
+  destroy_shadow_volume_storage();
   if (g_scene_uniform_memory)
   {
     vkUnmapMemory(g_device, g_scene_uniform_memory);
@@ -7668,117 +7632,6 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
     }
   }
 
-  static size_t most_shadow_volumes_warned_about = MAX_SCENE_SHADOW_VOLUMES;
-  if (pass.shadow_volumes.size() > most_shadow_volumes_warned_about)
-  {
-    most_shadow_volumes_warned_about = pass.shadow_volumes.size();
-    log_warning("[renderer] this view pass carries {} shadow volumes; only the first {} cut anything",
-              pass.shadow_volumes.size(), MAX_SCENE_SHADOW_VOLUMES);
-  }
-  size_t written_volume_count = 0;
-  for (const shared::shadow_volume_t& volume : pass.shadow_volumes)
-  {
-    if (written_volume_count == MAX_SCENE_SHADOW_VOLUMES)
-      break;
-    float* out = scene.shadow_volumes[written_volume_count++];
-    // Side slots then front slots, as reveal.glsl's shadow_margin splits them; an unused slot is
-    // (0, 0, 0, +big), which either reads as "far inside".
-    for (uint32_t slot = 0; slot < shared::MAX_SHADOW_VOLUME_PLANES; ++slot)
-    {
-      float*       plane_out = out + 4 * slot;
-      const bool   side      = slot < shared::SHADOW_VOLUME_SIDE_SLOTS;
-      const Plane* plane     = nullptr;
-      if (side && slot < volume.side_plane_count)
-        plane = &volume.side_planes[slot];
-      else if (!side && slot - shared::SHADOW_VOLUME_SIDE_SLOTS < volume.light_facing_plane_count)
-        plane = &volume.light_facing_planes[slot - shared::SHADOW_VOLUME_SIDE_SLOTS];
-      if (plane == nullptr)
-      {
-        plane_out[0] = plane_out[1] = plane_out[2] = 0.0f;
-        plane_out[3] = 1.0e9f;
-        continue;
-      }
-      plane_out[0] = plane->normal.x;
-      plane_out[1] = plane->normal.y;
-      plane_out[2] = plane->normal.z;
-      plane_out[3] = linalg::dot(plane->normal, plane->point);
-    }
-    static_assert(sizeof(volume.light) == sizeof(float));
-    memcpy(&scene.shadow_volume_lights[(written_volume_count - 1) / 4][(written_volume_count - 1) % 4],
-           &volume.light, sizeof(float));
-    uint32_t light_index = SCENE_SHADOW_VOLUME_NO_LIGHT_INDEX;
-    for (int32_t candidate = 0; candidate < scene.light_count; ++candidate)
-      if (pass.lights[(uint32_t)candidate].uid == volume.light)
-      {
-        light_index = (uint32_t)candidate;
-        break;
-      }
-    if (volume.drawn_by_march && light_index == SCENE_SHADOW_VOLUME_NO_LIGHT_INDEX)
-      log_error("[renderer] marched shadow volume of caster {} names light {}, which this view pass does not carry",
-                volume.caster, volume.light);
-    const uint32_t volume_counts = volume.side_plane_count | (volume.light_facing_plane_count << 8) |
-                                   (volume.cuts_geometry ? SCENE_SHADOW_VOLUME_CUTS_GEOMETRY_BIT : 0u) |
-                                   (volume.drawn_by_march ? SCENE_SHADOW_VOLUME_MARCHED_BIT : 0u) |
-                                   (light_index << SCENE_SHADOW_VOLUME_LIGHT_INDEX_SHIFT);
-    memcpy(&scene.shadow_volume_counts[(written_volume_count - 1) / 4][(written_volume_count - 1) % 4],
-           &volume_counts, sizeof(float));
-
-    const std::optional<shared::aabb_bounds_t> body_bounds = shared::try_compute_drawn_shadow_body_bounds(
-        volume,
-        Span<const shared::shadow_occluder_t>(pass.shadow_occluders.data,
-                                              std::min(pass.shadow_occluders.count, MAX_SCENE_SHADOW_OCCLUDERS)),
-        1u << (written_volume_count - 1));
-    float* box_out = scene.shadow_volume_boxes[written_volume_count - 1];
-    box_out[0]     = body_bounds ? body_bounds->min.x : 0.0f;
-    box_out[1]     = body_bounds ? body_bounds->min.y : 0.0f;
-    box_out[2]     = body_bounds ? body_bounds->min.z : 0.0f;
-    box_out[4]     = body_bounds ? body_bounds->max.x : 0.0f;
-    box_out[5]     = body_bounds ? body_bounds->max.y : 0.0f;
-    box_out[6]     = body_bounds ? body_bounds->max.z : 0.0f;
-  }
-  scene.shadow_volume_settings[0] = (float)written_volume_count;
-
-  if (pass.shadow_occluders.size() > MAX_SCENE_SHADOW_OCCLUDERS)
-  {
-    log_error("[renderer] this view pass carries {} shadow occluders; only the first {} end a drawn volume",
-              pass.shadow_occluders.size(), MAX_SCENE_SHADOW_OCCLUDERS);
-  }
-  size_t written_occluder_count = 0;
-  for (const shared::shadow_occluder_t& occluder : pass.shadow_occluders)
-  {
-    if (written_occluder_count == MAX_SCENE_SHADOW_OCCLUDERS)
-      break;
-    float* out = scene.shadow_occluders[written_occluder_count++];
-    for (uint32_t slot = 0; slot < shared::MAX_SHADOW_VOLUME_PLANES; ++slot)
-    {
-      float*       plane_out = out + 4 * slot;
-      const bool   pyramid   = slot < shared::SHADOW_VOLUME_SIDE_SLOTS;
-      const Plane* plane     = nullptr;
-      if (pyramid && slot < occluder.pyramid_plane_count)
-        plane = &occluder.pyramid_planes[slot];
-      else if (!pyramid && slot - shared::SHADOW_VOLUME_SIDE_SLOTS < occluder.light_facing_plane_count)
-        plane = &occluder.light_facing_planes[slot - shared::SHADOW_VOLUME_SIDE_SLOTS];
-      if (plane == nullptr)
-      {
-        plane_out[0] = plane_out[1] = plane_out[2] = 0.0f;
-        plane_out[3] = 1.0e9f;
-        continue;
-      }
-      plane_out[0] = plane->normal.x;
-      plane_out[1] = plane->normal.y;
-      plane_out[2] = plane->normal.z;
-      plane_out[3] = linalg::dot(plane->normal, plane->point);
-    }
-    const uint32_t word = occluder.volume_bits | (occluder.receives ? shared::SHADOW_OCCLUDER_RECEIVES_BIT : 0u);
-    static_assert(sizeof(word) == sizeof(float));
-    memcpy(&scene.shadow_occluder_bits[(written_occluder_count - 1) / 4][(written_occluder_count - 1) % 4],
-           &word, sizeof(float));
-    const uint32_t occluder_counts = occluder.pyramid_plane_count | (occluder.light_facing_plane_count << 8);
-    memcpy(&scene.shadow_occluder_counts[(written_occluder_count - 1) / 4][(written_occluder_count - 1) % 4],
-           &occluder_counts, sizeof(float));
-  }
-  scene.shadow_volume_settings[3] = (float)written_occluder_count;
-
   if (pass.beams.size() > MAX_SCENE_BEAMS)
   {
     log_error("[renderer] this view pass carries {} beams; only the first {} are drawn", pass.beams.size(),
@@ -7931,6 +7784,9 @@ static scene_uniform_t build_scene_uniform(const view_pass_t &pass)
     light.spot_params[1] = source.cos_outer;
     light.spot_params[2] = source.range;
     light.spot_params[3] = (float)(int)source.kind;
+
+    light.flags[0] = source.solid_shadows ? 1.0f : 0.0f;
+    light.flags[1] = light.flags[2] = light.flags[3] = 0.0f;
   }
 
   switch (pass.debug_channel)
@@ -8022,8 +7878,8 @@ struct shadow_job_t
 // g_draw_skinning, and the shadow layers its lights claimed.
 struct prepared_pass_t
 {
-  uint32_t scene_block_offset = 0;
-  uint32_t skinning_base      = 0;
+  uint32_t scene_block_offset  = 0;
+  uint32_t skinning_base       = 0;
   Array<shadow_job_t, MAX_SHADOW_LAYERS> jobs;
   uint32_t job_count = 0;
 };
@@ -9553,7 +9409,6 @@ bool init(SDL_Window *window)
   create_background_resources();
   create_fog_resources(); // before the screen target inputs: the tonemap samples the fog totals
   create_beam_resources(); // after create_mesh_resources: it binds the pass set layout
-  create_black_cubemap();  // before the screen target inputs: the shadow body draw binds it
   write_screen_target_inputs();
   create_skybox_resources();
   create_shadow_resources(); // before the defaults: the white lightmap's pass set binds the pool
@@ -9789,6 +9644,7 @@ bool new_frame()
   // this frame index's per-frame memory has finished with it.
   reset_frame_uniforms(g_skinning_uniforms, g_current_frame_idx_in_swapchain);
   g_scene_next_block = 0;
+  begin_shadow_volume_storage_frame(g_current_frame_idx_in_swapchain);
   reset_debug_vertices();
   g_ui_vertex_used    = 0;
 
@@ -9952,26 +9808,13 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
     scene.beam[1]                  = std::clamp(look.beam_alpha, 0.0f, 1.0f);
     scene.beam[2]                  = std::max(look.beam_dot_spacing_pixels, 1.0f);
     scene.beam[3]                  = std::max(look.beam_edge_pixels, 0.0f);
-    scene.shadow_volume_settings[1] = look.shadow_volume ? std::clamp(look.shadow_volume_alpha, 0.0f, 1.0f) : 0.0f;
-    scene.shadow_volume_settings[2] = look.shadow_volume ? 1.0f : 0.0f;
-    scene.shadow_volume_color[0]    = std::max(look.shadow_volume_color.x, 0.0f);
-    scene.shadow_volume_color[1]    = std::max(look.shadow_volume_color.y, 0.0f);
-    scene.shadow_volume_color[2]    = std::max(look.shadow_volume_color.z, 0.0f);
-    scene.shadow_volume_color[3]    = std::clamp(look.shadow_volume_edge_tint, 0.0f, 1.0f);
-    scene.shadow_volume_fill[0]     = pass.shadow_fill.valid() ? 1.0f : 0.0f;
-    scene.shadow_volume_fill[1]     = (float)std::clamp(look.shadow_volume_march_steps, 1, 256);
-    if (look.shadow_plank)
-    {
-      // The plank stands in for these bodies (shared/lighting/support_planks.hpp): an empty box draws nothing.
-      const uint32_t volume_count = std::min(pass.shadow_volumes.count, MAX_SCENE_SHADOW_VOLUMES);
-      for (uint32_t volume_index = 0; volume_index < volume_count; ++volume_index)
-      {
-        const shared::shadow_volume_t& volume = pass.shadow_volumes[volume_index];
-        if (shared::shadow_volume_reaches_lens(volume))
-          for (uint32_t component = 0; component < 8; ++component)
-            scene.shadow_volume_boxes[volume_index][component] = 0.0f;
-      }
-    }
+    scene.solid_shadow_fill[0]      = std::max(look.solid_shadow_color.x, 0.0f);
+    scene.solid_shadow_fill[1]      = std::max(look.solid_shadow_color.y, 0.0f);
+    scene.solid_shadow_fill[2]      = std::max(look.solid_shadow_color.z, 0.0f);
+    scene.solid_shadow_fill[3]      = std::clamp(look.solid_shadow_fill, 0.0f, 1.0f);
+    const written_shadow_volumes_t shadow_volumes = write_shadow_volumes(pass.shadow_volumes);
+    scene.shadow_volume_storage[0]  = (float)shadow_volumes.first_volume;
+    scene.shadow_volume_settings[0] = (float)shadow_volumes.count;
     scene.fog_settings[1]     = FOG_GRID_NEAR;
     scene.fog_settings[2]     = fog_far;
     scene.fog_settings[3]     = std::clamp(look.fog_anisotropy, -0.95f, 0.95f);
@@ -10130,36 +9973,16 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   }
   mark_gpu_pass_end(cmd, frame, gpu_pass_t::Outline_Mask);
 
-  // 5c. The BEAM pass: every perspective pass's beams and drawn shadow volumes over the HDR target,
-  //     against the depth the scene pass wrote, which is what lets a shadow volume bite a shaft out of a beam.
+  // 5c. The BEAM pass: every perspective pass's beams over the HDR target, against the depth the scene pass
+  //     wrote, which is what lets a shadow volume bite a shaft out of a beam.
   const auto pass_draws_beams = [&](const view_pass_t& pass) -> bool
-  {
-    const bool drawn_volumes = look.shadow_volume && !pass.shadow_volumes.empty();
-    return (!pass.beams.empty() || drawn_volumes) && !pass.view.camera.orthographic;
-  };
+  { return !pass.beams.empty() && !pass.view.camera.orthographic; };
   bool any_beams = false;
   for (const view_pass_t& pass : passes)
     any_beams = any_beams || pass_draws_beams(pass);
 
   if (any_beams)
   {
-    // One body set per frame in flight, so the first pass drawing volumes names the frame's fill.
-    skybox_handle_t fill = {};
-    for (const view_pass_t& pass : passes)
-      if (pass_draws_beams(pass))
-      {
-        fill = pass.shadow_fill;
-        break;
-      }
-    if (fill.valid() && fill.index >= g_skyboxes.size())
-      fatal_error("[renderer] shadow fill handle {} past the {} resident skies", fill.index, g_skyboxes.size());
-    if (g_shadow_fill_written[g_current_frame_idx_in_swapchain] != fill)
-    {
-      write_shadow_body_inputs(g_current_frame_idx_in_swapchain,
-                               fill.valid() ? g_skyboxes[fill.index].texture : g_black_cubemap);
-      g_shadow_fill_written[g_current_frame_idx_in_swapchain] = fill;
-    }
-
     VkRenderPassBeginInfo beam_pass_info{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     beam_pass_info.renderPass        = g_beam_render_pass;
     beam_pass_info.framebuffer       = g_beam_framebuffers[g_current_frame_idx_in_swapchain];
@@ -10175,12 +9998,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
       if (pass_set == VK_NULL_HANDLE)
         continue;
       apply_viewport(cmd, pass.view.viewport);
-      if (!pass.beams.empty())
-        record_box_draws(cmd, g_beam_draw, pass_set, g_prepared_passes[pass_index].scene_block_offset,
-                         std::min<uint32_t>((uint32_t)pass.beams.size(), MAX_SCENE_BEAMS));
-      if (look.shadow_volume && !pass.shadow_volumes.empty())
-        record_box_draws(cmd, g_shadow_body_draw, pass_set, g_prepared_passes[pass_index].scene_block_offset,
-                         std::min(pass.shadow_volumes.count, MAX_SCENE_SHADOW_VOLUMES));
+      record_box_draws(cmd, g_beam_draw, pass_set, g_prepared_passes[pass_index].scene_block_offset,
+                       std::min<uint32_t>((uint32_t)pass.beams.size(), MAX_SCENE_BEAMS));
     }
     vkCmdEndRenderPass(cmd);
   }
@@ -10245,7 +10064,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
       std::clamp(tonemap.lens_view_fraction, 0.0f, 1.0f),
       tonemap.lens_view_color.x,
       tonemap.lens_view_color.y,
-      tonemap.lens_view_color.z};
+      tonemap.lens_view_color.z,
+      look.solid_shadow_edge ? 1.0f : 0.0f};
   record_fullscreen_draw(cmd, g_tonemap_draw, tonemap_push);
   vkCmdEndRenderPass(cmd);
 

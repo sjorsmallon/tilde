@@ -201,6 +201,23 @@ vec3 projector_mask(Light light, vec3 world_position)
     return texture(projectorPictures, vec3(uv, float(shadow_pool_layer(layer)))).rgb;
 }
 
+// Whether a projector's frame holds the point at all: inside its picture's uv square and in front of the
+// lens. True for every other kind of light. Black OUTSIDE the frame is the sampler's border, not a dark
+// picture, so a reader that acts on the picture's dark asks this first.
+bool projector_frame_holds(Light light, vec3 world_position)
+{
+    if (int(light.spot_params.w) != LIGHT_TYPE_PROJECTOR)
+        return true;
+    int layer = LIGHT_SHADOW_LAYER(light);
+    if (layer < 0)
+        return false;
+    vec4 clip = scene.shadow_view_projection[layer] * vec4(world_position, 1.0);
+    if (clip.w <= 0.0)
+        return false;
+    vec2 uv = (clip.xy / clip.w) * 0.5 + 0.5;
+    return all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)));
+}
+
 // Which of the sun's cascades a point falls in, by its VIEW depth, and how far
 // into the blend band toward the next it sits (0 outside the band). index is
 // -1 past the last cascade, or when no sun claimed any this frame.

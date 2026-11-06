@@ -120,6 +120,9 @@ struct scene_light_t
   // LAYER it gets per frame, ranked against the pool. Both copies of a Mixed
   // light carry the same uid, which is how they end up naming the same layer.
   bool         casts_shadows = true;
+  // Light::solid_shadows is not None: the shader marks where this light's shadow lands, for the ink's
+  // outline and the cel fill (light_gather.glsl's solid_shadow_lands_here).
+  bool         solid_shadows = false;
   entity_uid_t uid           = null_entity_uid;
 };
 

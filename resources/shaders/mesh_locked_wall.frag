@@ -67,9 +67,9 @@ void main() {
         return;
     }
 
-    float solid_ink;
-    vec3  lit        = light_surface(LOOK, surface, fragWorldPosition, V, solid_ink);
-    outSurfaceNormal = store_solid_ink(outSurfaceNormal, solid_ink);
+    float solid_ink, solid_shadow;
+    vec3  lit        = light_surface(LOOK, surface, fragWorldPosition, V, solid_ink, solid_shadow);
+    outSurfaceNormal = store_surface_ink(outSurfaceNormal, solid_ink, solid_shadow);
 
     float line = 1.0 - smoothstep(KEYHOLE_LATTICE_LINE - pixel, KEYHOLE_LATTICE_LINE + pixel, lattice);
     lit        = mix(lit, lit * KEYHOLE_LATTICE_DARKNESS, line);

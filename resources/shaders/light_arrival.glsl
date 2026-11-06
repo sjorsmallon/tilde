@@ -42,6 +42,9 @@ struct Light {
     vec4 direction;
     vec4 radiance;          // rgb, already through shared/lighting/lighting.hpp's radiance_of
     vec4 spot_params;       // x = cos(inner), y = cos(outer), z = range, w = type (one of LIGHT_TYPE_*)
+    // x = 1 when the light's shadows are solid (Light::solid_shadows): the ink outlines its shadow where it
+    // lands and the cel look fills it flat (light_gather.glsl). yzw spare.
+    vec4 flags;
 };
 
 // lighting_def.md decision B: ONE array, and the surface decides. The -DLIGHTMAP
@@ -49,6 +52,7 @@ struct Light {
 // so the branch costs nothing at runtime and a second array costs a second
 // upload plus a second thing to keep in agreement.
 #define LIGHT_BAKED_SLOT(light) (int((light).position.w))
+#define LIGHT_SOLID_SHADOWS(light) ((light).flags.x > 0.5)
 
 // What one light does at one surface point. A struct rather than the vec4 of L
 // and attenuation this returned before, because the DISTANCE is what an area

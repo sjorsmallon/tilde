@@ -366,18 +366,15 @@ struct cvar_state_t
   Beam_Fill r_beam_fill;
   float r_beam_dot_spacing;
   float r_beam_edge_pixels;
-  bool r_shadow_volume;
-  float r_shadow_volume_alpha;
-  float r_shadow_volume_red;
-  float r_shadow_volume_green;
-  float r_shadow_volume_blue;
-  float r_shadow_volume_edge_tint;
-  int32_t r_shadow_volume_march_steps;
+  bool r_solid_shadow_edge;
+  float r_solid_shadow_fill;
+  float r_solid_shadow_red;
+  float r_solid_shadow_green;
+  float r_solid_shadow_blue;
   bool r_shadow_plank;
   float r_shadow_plank_alpha;
   bool r_look_panel;
   network::pascal_string_t<64> sv_skybox;
-  network::pascal_string_t<64> sv_shadow_fill;
   bool debug_show_collisions;
   bool debug_show_hitboxes;
   bool debug_show_navmesh;
@@ -625,43 +622,40 @@ enum class cvar_id : uint16_t
   r_beam_fill = 212,
   r_beam_dot_spacing = 213,
   r_beam_edge_pixels = 214,
-  r_shadow_volume = 215,
-  r_shadow_volume_alpha = 216,
-  r_shadow_volume_red = 217,
-  r_shadow_volume_green = 218,
-  r_shadow_volume_blue = 219,
-  r_shadow_volume_edge_tint = 220,
-  r_shadow_volume_march_steps = 221,
-  r_shadow_plank = 222,
-  r_shadow_plank_alpha = 223,
-  r_look_panel = 224,
-  sv_skybox = 225,
-  sv_shadow_fill = 226,
-  debug_show_collisions = 227,
-  debug_show_hitboxes = 228,
-  debug_show_navmesh = 229,
-  debug_show_box_volumes = 230,
-  debug_hide_geometry = 231,
-  debug_show_wireframe = 232,
-  debug_show_collision_pieces = 233,
-  cl_shot_debug_seconds = 234,
-  cl_grab_distance = 235,
-  cl_shadow_volume_debug = 236,
-  cl_solid_beam_debug = 237,
-  debug_show_entity_counts = 238,
-  net_snapshot_debug = 239,
-  sv_event_debug = 240,
-  cl_event_debug = 241,
-  sv_reliable_debug = 242,
-  sv_io_debug = 243,
-  replay_keyframe_seconds = 244,
-  sv_replay_auto = 245,
-  sv_ghost_record = 246,
+  r_solid_shadow_edge = 215,
+  r_solid_shadow_fill = 216,
+  r_solid_shadow_red = 217,
+  r_solid_shadow_green = 218,
+  r_solid_shadow_blue = 219,
+  r_shadow_plank = 220,
+  r_shadow_plank_alpha = 221,
+  r_look_panel = 222,
+  sv_skybox = 223,
+  debug_show_collisions = 224,
+  debug_show_hitboxes = 225,
+  debug_show_navmesh = 226,
+  debug_show_box_volumes = 227,
+  debug_hide_geometry = 228,
+  debug_show_wireframe = 229,
+  debug_show_collision_pieces = 230,
+  cl_shot_debug_seconds = 231,
+  cl_grab_distance = 232,
+  cl_shadow_volume_debug = 233,
+  cl_solid_beam_debug = 234,
+  debug_show_entity_counts = 235,
+  net_snapshot_debug = 236,
+  sv_event_debug = 237,
+  cl_event_debug = 238,
+  sv_reliable_debug = 239,
+  sv_io_debug = 240,
+  replay_keyframe_seconds = 241,
+  sv_replay_auto = 242,
+  sv_ghost_record = 243,
 };
 
 // Not a member of the enum above, so `switch` over a cvar_id still
 // warns on an unhandled case.
-constexpr uint32_t CVAR_COUNT = 247;
+constexpr uint32_t CVAR_COUNT = 244;
 
 enum class command_id : uint16_t
 {

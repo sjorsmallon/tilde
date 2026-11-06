@@ -43,6 +43,18 @@ void retire_buffer(VkBuffer buffer, VkDeviceMemory memory);
 void destroy_buffers_retired_in_frame_slot(uint32_t frame_slot);
 void destroy_all_retired_buffers();
 
+// shadow_volumes.cpp
+struct written_shadow_volumes_t
+{
+  uint32_t first_volume = 0;
+  uint32_t count        = 0;
+};
+void create_shadow_volume_storage();
+void destroy_shadow_volume_storage();
+void begin_shadow_volume_storage_frame(uint32_t frame_slot);
+VkDescriptorBufferInfo get_shadow_volume_storage_descriptor();
+written_shadow_volumes_t write_shadow_volumes(Span<const shared::shadow_volume_t> volumes);
+
 // debug_draw.cpp
 void create_debug_resources();
 void destroy_debug_resources();

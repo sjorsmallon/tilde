@@ -53,6 +53,8 @@ layout(push_constant) uniform Tonemap
     float lens_view_red;
     float lens_view_green;
     float lens_view_blue;
+    // 1 draws the edge of a solid light's shadow as a crease (r_solid_shadow_edge).
+    float solid_shadow_edge;
 } tonemap;
 
 layout(location = 0) in vec2 in_uv;
@@ -108,6 +110,8 @@ vec2 depth_bend(ivec2 pixel, ivec2 reach, ivec2 last_pixel, float centre)
 }
 
 // The angle between the surface normals `reach` either side of `pixel`, 0 where either side drew no surface.
+// The edge of a solid light's shadow (surface_normal.glsl's bit) is a full turn: it is drawn as a crease, the
+// same line the object casting it gets, so the shadow reads as the object it is to a player.
 float normal_turn(ivec2 pixel, ivec2 reach, ivec2 last_pixel)
 {
     ivec2 before = pixel - reach;
@@ -119,6 +123,8 @@ float normal_turn(ivec2 pixel, ivec2 reach, ivec2 last_pixel)
     vec4 stored_after  = texelFetch(scene_normal, after, 0);
     if (!surface_was_drawn(stored_before) || !surface_was_drawn(stored_after))
         return 0.0;
+    if (tonemap.solid_shadow_edge > 0.0 && stored_solid_shadow(stored_before) != stored_solid_shadow(stored_after))
+        return 3.14159265;
 
     return acos(clamp(dot(stored_surface_normal(stored_before), stored_surface_normal(stored_after)),
                       -1.0, 1.0));

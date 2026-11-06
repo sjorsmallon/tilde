@@ -105,9 +105,9 @@ void main() {
         return;
     }
 
-    float solid_ink;
-    vec3  lit = light_surface(LOOK, surface, fragWorldPosition, V, solid_ink);
-    outSurfaceNormal = store_solid_ink(outSurfaceNormal, solid_ink);
+    float solid_ink, solid_shadow;
+    vec3  lit = light_surface(LOOK, surface, fragWorldPosition, V, solid_ink, solid_shadow);
+    outSurfaceNormal = store_surface_ink(outSurfaceNormal, solid_ink, solid_shadow);
 
     outColor = reflection_capture_debug(shadow_cascade_debug(vec4(lit, surfaceAlpha), fragWorldPosition),
                                         fragWorldPosition);

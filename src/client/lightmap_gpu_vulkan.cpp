@@ -99,8 +99,9 @@ struct gpu_bake_light_t
   float direction[4];
   float radiance[4];
   float spot_params[4];
+  float flags[4];
 };
-static_assert(sizeof(gpu_bake_light_t) == 64, "struct Light in light_arrival.glsl is 64 bytes");
+static_assert(sizeof(gpu_bake_light_t) == 80, "struct Light in light_arrival.glsl is 80 bytes");
 
 gpu_bake_light_t bake_light_from(const shared::baked_light_t &source, uint32_t slot)
 {

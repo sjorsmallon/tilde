@@ -57,7 +57,6 @@ struct draw_lists_t
   // Where `reveal_cones` and their lights come from; the pass reads neither from here.
   std::vector<lit_reveal_cone_t>                       lit_reveal_cones;
   std::vector<shared::shadow_volume_t>                 shadow_volumes;
-  std::vector<shared::shadow_occluder_t>               shadow_occluders;
   std::vector<renderer::fog_volume_t>                  fog_volumes;
   std::vector<shared::lens_t>                          lenses;
   // The channel bits of the lens the camera's own eye holds (the Red Lens view); 0 when none is held.
@@ -75,7 +74,6 @@ struct draw_lists_t
   // The sky, for the atlas's reason and with the atlas's lifetime: it belongs
   // to the world rather than to the frame, so begin_frame leaves it alone.
   renderer::skybox_handle_t sky;
-  renderer::skybox_handle_t shadow_fill;
 
   cvars::Debug_Channel debug_channel = cvars::Debug_Channel::off;
 
@@ -128,7 +126,6 @@ struct draw_lists_t
     reveal_cones.clear();
     lit_reveal_cones.clear();
     shadow_volumes.clear();
-    shadow_occluders.clear();
     fog_volumes.clear();
     lenses.clear();
     held_lens_channels = 0;
@@ -151,7 +148,6 @@ struct draw_lists_t
     pass.beam_ripples      = beam_ripples;
     pass.reveal_cones      = reveal_cones;
     pass.shadow_volumes    = shadow_volumes;
-    pass.shadow_occluders  = shadow_occluders;
     pass.fog_volumes       = fog_volumes;
     pass.lenses            = lenses;
     pass.held_lens_channels = held_lens_channels;
@@ -163,7 +159,6 @@ struct draw_lists_t
     pass.custom    = custom;
     pass.lightmap  = lightmap;
     pass.sky       = sky;
-    pass.shadow_fill = shadow_fill;
     pass.selected_outline_color = selected_outline_color;
     pass.hovered_outline_color  = hovered_outline_color;
     return pass;

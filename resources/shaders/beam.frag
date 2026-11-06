@@ -10,8 +10,7 @@
 // hole's rim, a shadow's edge seen from beside it, the edge where the beam lands. Across a depth jump (a
 // crate's silhouette inside the beam) only the cone's silhouette counts; the ink pass draws that edge. A
 // beam with no carve (the editor's) is lit along its whole chord. Beams over one another compose through
-// the pass's blend, one draw each, front to back. The drawn shadow volumes follow in the same pass, one box
-// each (shadow_body.frag).
+// the pass's blend, one draw each, front to back.
 
 layout(set = 0, binding = 0) uniform sampler2D scene_depth;
 

@@ -630,14 +630,12 @@ Debugging :: cvars {
     r_beam_fill:            Beam_Fill = .tint @Client  "What fills a beam: tint is a flat wash, dots a screentone of ink dots with nothing between them, at the same average tint as the wash"
     r_beam_dot_spacing:     f32 = 8.0       @Client    "Pixels between the dots of a screentone beam fill"
     r_beam_edge_pixels:     f32 = 2.0       @Client    "Width on screen of the line drawn where a beam ends on screen, its silhouette and where it lands, in the light's colour; 0 draws none"
-    r_shadow_volume:        bool = true     @Client    "Draw every shadow volume the collision reads as a dark body in the air, lines where it ends on screen and a rim where it lands, the whole volume and not only the part inside a beam"
-    r_shadow_volume_alpha:  f32 = 0.25      @Client    "How much a drawn shadow volume darkens the air it fills, the same at every length and from every side"
-    r_shadow_volume_red:    f32 = 0.0       @Client    "Red of the colour a drawn shadow volume's body is filled with, through r_beam_fill's pattern; black is the plain wash"
-    r_shadow_volume_green:  f32 = 0.0       @Client    "Green of the colour a drawn shadow volume's body is filled with"
-    r_shadow_volume_blue:   f32 = 0.0       @Client    "Blue of the colour a drawn shadow volume's body is filled with"
-    r_shadow_volume_edge_tint: f32 = 0.0    @Client    "How much of the body's colour its line and rim keep: 0 is black ink, 1 an edge in the body's own colour"
-    r_shadow_volume_march_steps: i32 = 24   @Client    "Samples of the light's shadow map along the line of sight through a player's shadow volume, whose body is drawn from the map; a part thinner than one step sparkles"
-    r_shadow_plank:         bool = true     @Client    "Draw a flat strip a body wide from a player held by a solid shadow to where their shadow lands, instead of the dark body of a from-the-lens pyramid or of the player's own volume"
+    r_solid_shadow_edge:    bool = true     @Client    "Ink the edge of a solid light's shadow where it lands (Light::solid_shadows), the same line a crease or a depth jump gets, so the shadow reads as the object it is to a player"
+    r_solid_shadow_fill:    f32 = 1.0       @Client    "How far a solid light's shadow is filled flat with r_solid_shadow_red/green/blue where it lands, over the cel fill (0 = drawn as any other shadow)"
+    r_solid_shadow_red:     f32 = 0.10      @Client    "Red of the flat colour a solid light's shadow is filled with"
+    r_solid_shadow_green:   f32 = 0.08      @Client    "Green of the flat colour a solid light's shadow is filled with"
+    r_solid_shadow_blue:    f32 = 0.16      @Client    "Blue of the flat colour a solid light's shadow is filled with"
+    r_shadow_plank:         bool = false    @Client    "Draw a flat strip a body wide from a player held by a solid shadow to where their shadow lands"
     r_shadow_plank_alpha:   f32 = 0.6       @Client    "How dark the plank is; its edges are drawn solid"
 
     r_look_panel:           bool = false    @Client    "Show the look panel: a slider per comic look cvar, and an export and load of their values as looks/<name>.look"
@@ -657,7 +655,6 @@ Debugging :: cvars {
     // and the existing memcmp broadcast replicates it to every client -- no new
     // message, and a late joiner gets it too.
     sv_skybox:              string<64> = ""  @Mirrored  "Cubemap the map shows as its sky (a folder name under resources/cubemaps/); empty for none"
-    sv_shadow_fill:         string<64> = ""  @Mirrored  "Cubemap a drawn shadow volume's body shows, sampled by the line of sight as the sky is (a folder name under resources/cubemaps/); empty for the black wash"
 
     debug_show_collisions:  bool = false                "Show collision faces in green"
     debug_show_hitboxes:    bool = true                "Show entity hitboxes in wireframe"

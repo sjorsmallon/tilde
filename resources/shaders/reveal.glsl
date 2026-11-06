@@ -2,6 +2,7 @@
 #define REVEAL_GLSL
 
 #include "scene.glsl"
+#include "shadow_volume_data.glsl"
 #include "shading_cel.glsl"
 #include "ripple.glsl"
 
@@ -102,16 +103,15 @@ float shadow_margin(vec3 world_position)
     for (int volume = 0; volume < volume_count; ++volume) {
         if (!shadow_volume_cuts_geometry(volume))
             continue;
-        const int   first  = volume * MAX_SHADOW_VOLUME_PLANES;
         const ivec2 counts = shadow_volume_plane_counts(volume);
         float       inside = 1e9;
         for (int slot = 0; slot < counts.x; ++slot) {
-            const vec4 side = scene.shadow_volumes[first + slot];
+            const vec4 side = shadow_volume_plane(volume, slot);
             inside = min(inside, (side.w - dot(side.xyz, world_position)) / SHADOW_RIM_UNITS);
         }
         bool behind_front = true;
         for (int slot = SHADOW_VOLUME_SIDE_SLOTS; slot < SHADOW_VOLUME_SIDE_SLOTS + counts.y; ++slot) {
-            const vec4 front = scene.shadow_volumes[first + slot];
+            const vec4 front = shadow_volume_plane(volume, slot);
             behind_front = behind_front && front.w - dot(front.xyz, world_position) > SHADOW_FRONT_SLACK_UNITS;
         }
         if (behind_front)

@@ -28,6 +28,7 @@ std::optional<scene_light_t> try_convert_light_entity_to_scene_light(const entit
     light.range = point->range;
     light.source_radius = std::max(point->light.source_radius, 0.f);
     light.casts_shadows = point->light.casts_shadows;
+    light.solid_shadows = point->light.solid_shadows != entities::Solid_Shadows::None;
     return light;
   }
 
@@ -45,6 +46,7 @@ std::optional<scene_light_t> try_convert_light_entity_to_scene_light(const entit
     light.cos_outer = std::cos(linalg::to_radians(spot->outer_degrees));
     light.source_radius = std::max(spot->light.source_radius, 0.f);
     light.casts_shadows = spot->light.casts_shadows;
+    light.solid_shadows = spot->light.solid_shadows != entities::Solid_Shadows::None;
     return light;
   }
 
@@ -67,6 +69,7 @@ std::optional<scene_light_t> try_convert_light_entity_to_scene_light(const entit
     light.picture       = projector->texture;
     light.source_radius = std::max(projector->light.source_radius, 0.f);
     light.casts_shadows = projector->light.casts_shadows;
+    light.solid_shadows = projector->light.solid_shadows != entities::Solid_Shadows::None;
     return light;
   }
 
@@ -88,6 +91,7 @@ std::optional<scene_light_t> try_convert_light_entity_to_scene_light(const entit
         std::clamp(directional->angular_diameter_degrees * 0.5f, 0.f, 89.f);
     light.source_radius = std::tan(linalg::to_radians(angular_radius_degrees));
     light.casts_shadows = directional->light.casts_shadows;
+    light.solid_shadows = directional->light.solid_shadows != entities::Solid_Shadows::None;
     return light;
   }
 
