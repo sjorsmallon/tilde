@@ -88,6 +88,26 @@ static bool inside_any_piece(Span<const shared::collision_piece_t> pieces, const
   return false;
 }
 
+static std::vector<vec3> box_corners(const vec3& minimum, const vec3& maximum)
+{
+  std::vector<vec3> corners;
+  for (int corner = 0; corner < 8; ++corner)
+    corners.push_back({(corner & 1) ? maximum.x : minimum.x, (corner & 2) ? maximum.y : minimum.y,
+                       (corner & 4) ? maximum.z : minimum.z});
+  return corners;
+}
+
+// A dop block as decompose_mesh.py writes one: the extents of the box's corners, in the directions' order.
+static std::string box_dop_block(const vec3& minimum, const vec3& maximum)
+{
+  const std::vector<vec3>             corners = box_corners(minimum, maximum);
+  const shared::directional_extents_t extents = shared::compute_directional_extents(corners);
+  std::string                         block   = "dop\n";
+  for (uint32_t direction = 0; direction < shared::DIRECTIONAL_BOUND_DIRECTIONS; ++direction)
+    block += std::format("  {} {}\n", extents[direction].nearest, extents[direction].furthest);
+  return block;
+}
+
 static std::string box_hull_block(const vec3& minimum, const vec3& maximum)
 {
   std::string block = "hull\n";
@@ -204,21 +224,92 @@ int main()
       crowded += std::format(" {} {} {}", (float)point, (float)(point * point), (float)(point % 7));
     check(!shared::try_parse_collision_file(crowded, "crowded.collision"), "a block past the point cap is refused");
 
-    const shared::asset_collision_file_t committed = shared::read_asset_collision_file({.path = "resources/glb/mvmt.glb"});
-    const std::optional<std::vector<shared::collision_piece_t>> committed_pieces =
-        shared::try_build_collision_pieces_from_hulls(committed.hulls, {1.f, 1.f, 1.f}, {0.f, 0.f, 0.f},
-                                                      linalg::quatf::identity(), "resources/glb/mvmt.collision");
-    printf("       mvmt.collision: %zu hulls\n", committed.hulls.size());
-    check(committed.shape == shared::asset_collision_shape_t::Hulls && committed_pieces &&
-              committed_pieces->size() == committed.hulls.size(),
-          "the committed mvmt sidecar parses and every block hulls");
-
     const std::optional<shared::asset_collision_file_t> flat =
         shared::try_parse_collision_file("hull 0 0 0  64 0 0  64 0 64  0 0 64", "flat.collision");
     check(flat.has_value(), "a flat block parses: flatness is the hull's to find");
     check(flat && !shared::try_build_collision_pieces_from_hulls(flat->hulls, {1.f, 1.f, 1.f}, {0.f, 0.f, 0.f},
                                                                   linalg::quatf::identity(), "flat.collision"),
           "and is refused when hulled");
+  }
+
+  printf("[pin] the sidecar's dop blocks: one piece per block, its 26 planes built, never hulled\n");
+  {
+    const std::string text = box_dop_block({32.f, 0.f, -64.f}, {64.f, 16.f, 64.f}) +
+                             box_dop_block({-64.f, 0.f, -64.f}, {-32.f, 16.f, 64.f}) +
+                             box_dop_block({-32.f, 0.f, 32.f}, {32.f, 16.f, 64.f}) +
+                             box_dop_block({-32.f, 0.f, -64.f}, {32.f, 16.f, -32.f});
+    const std::optional<shared::asset_collision_file_t> file = shared::try_parse_collision_file(text, "ring.collision");
+    check(file && file->shape == shared::asset_collision_shape_t::Dops, "dop blocks parse as Dops");
+    check(file && file->dops.size() == 4 && file->hulls.empty(), "four blocks, no hulls");
+    check(file && file->dops[0][0].nearest == 32.f && file->dops[0][0].furthest == 64.f,
+          "a block's first pair is its reach along x");
+
+    if (file)
+    {
+      const linalg::quatf quarter_turn = linalg::from_axis_angle({0.f, 1.f, 0.f}, 90.f);
+      const std::optional<std::vector<shared::collision_piece_t>> placed = shared::try_build_collision_pieces_from_dops(
+          file->dops, {2.f, 1.f, 1.f}, {0.f, 200.f, 0.f}, quarter_turn, "ring.collision");
+      check(placed && placed->size() == 4, "each block is one piece");
+      size_t most_planes = 0;
+      if (placed)
+        for (const shared::collision_piece_t& piece : *placed)
+          most_planes = std::max(most_planes, piece.planes.size());
+      check(most_planes == 6, "a box's bound is six planes: the twenty redundant ones contribute no face");
+      if (placed)
+      {
+        const vec3 bar  = linalg::rotate(quarter_turn, vec3{96.f, 8.f, 0.f}) + vec3{0.f, 200.f, 0.f};
+        const vec3 hole = linalg::rotate(quarter_turn, vec3{48.f, 8.f, 0.f}) + vec3{0.f, 200.f, 0.f};
+        check(inside_any_piece(*placed, bar), "a point in a bar, stretched in x and turned, is inside");
+        check(!inside_any_piece(*placed, hole), "the hole, stretched with it, is in no piece");
+      }
+      check(!shared::try_build_collision_pieces_from_dops(file->dops, {0.f, 1.f, 1.f}, {0.f, 0.f, 0.f},
+                                                          linalg::quatf::identity(), "ring.collision"),
+            "a zero scale is refused: every block is flat");
+    }
+
+    // The octahedron's bound as a block, stretched: eight faces whatever the scale, and the diagonal planes tilt with it.
+    const std::vector<vec3> octahedron = {{1.f, 0.f, 0.f},  {-1.f, 0.f, 0.f}, {0.f, 1.f, 0.f},
+                                          {0.f, -1.f, 0.f}, {0.f, 0.f, 1.f},  {0.f, 0.f, -1.f}};
+    const shared::directional_extents_t extents = shared::compute_directional_extents(octahedron);
+    std::string                         octahedron_text = "dop";
+    for (uint32_t direction = 0; direction < shared::DIRECTIONAL_BOUND_DIRECTIONS; ++direction)
+      octahedron_text += std::format(" {} {}", extents[direction].nearest, extents[direction].furthest);
+    const std::optional<shared::asset_collision_file_t> octahedron_file =
+        shared::try_parse_collision_file(octahedron_text, "octahedron.collision");
+    const std::optional<std::vector<shared::collision_piece_t>> stretched =
+        octahedron_file ? shared::try_build_collision_pieces_from_dops(octahedron_file->dops, {3.f, 1.f, 1.f},
+                                                                       {0.f, 0.f, 0.f}, linalg::quatf::identity(),
+                                                                       "octahedron.collision")
+                        : std::nullopt;
+    check(stretched && stretched->size() == 1 && (*stretched)[0].planes.size() == 8,
+          "the stretched octahedron's bound has its eight faces");
+    check(stretched && inside_any_piece(*stretched, {2.9f, 0.f, 0.f}) && !inside_any_piece(*stretched, {1.5f, 0.6f, 0.f}),
+          "its corner moved out to x = 3 and its face stayed flat");
+
+    check(!shared::try_parse_collision_file("dop 0 1", "short.collision"), "two numbers are refused");
+    std::string reversed = "dop 1 0";
+    for (uint32_t direction = 1; direction < shared::DIRECTIONAL_BOUND_DIRECTIONS; ++direction)
+      reversed += " 0 1";
+    check(!shared::try_parse_collision_file(reversed, "reversed.collision"), "a nearest past its furthest is refused");
+    check(!shared::try_parse_collision_file(octahedron_text + " 7", "extra.collision"), "a 27th number is refused");
+    check(!shared::try_parse_collision_file("hull 0 0 0  1 0 0  0 1 0  0 0 1 " + octahedron_text, "mixed.collision"),
+          "hull and dop blocks in one file are refused");
+
+    for (const char* mesh_path : {"resources/glb/mvmt.glb", "resources/obj/Error.obj"})
+    {
+      const shared::asset_collision_file_t committed = shared::read_asset_collision_file({.path = mesh_path});
+      const std::optional<std::vector<shared::collision_piece_t>> committed_pieces =
+          shared::try_build_collision_pieces_from_dops(committed.dops, {1.f, 1.f, 1.f}, {0.f, 0.f, 0.f},
+                                                       linalg::quatf::identity(), mesh_path);
+      size_t most_planes = 0;
+      if (committed_pieces)
+        for (const shared::collision_piece_t& piece : *committed_pieces)
+          most_planes = std::max(most_planes, piece.planes.size());
+      printf("       %s: %zu dop blocks, at most %zu planes\n", mesh_path, committed.dops.size(), most_planes);
+      check(committed.shape == shared::asset_collision_shape_t::Dops && committed_pieces &&
+                committed_pieces->size() == committed.dops.size() && most_planes <= shared::DIRECTIONAL_BOUND_PLANES,
+            "the committed sidecar parses as dop blocks and every block closes within 26 planes");
+    }
   }
 
   const assets::mesh_asset_t ring = make_square_ring(64.f, 32.f, 16.f);

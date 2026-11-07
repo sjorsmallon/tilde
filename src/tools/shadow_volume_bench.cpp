@@ -74,6 +74,7 @@ int main(int argc, char** argv)
               map_path.c_str(), report.caster_pieces, report.cutting_lights, report.kept,
               report.refused_too_many_planes);
   std::printf("  %zu solid shadow movers\n", solid_movers.size());
+  std::printf("%s\n", shared::describe_shadow_volume_report(report, volumes).c_str());
   std::printf("  median over %d: cut %.2f ms, solid shadows %.2f ms (a 60 Hz tick is 16.7 ms)\n", iterations,
               median_milliseconds(cut_ms), median_milliseconds(solid_ms));
   return 0;

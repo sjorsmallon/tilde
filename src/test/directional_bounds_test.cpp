@@ -5,6 +5,7 @@
 #include "geometry/convex_hull.hpp"
 #include "geometry/directional_bounds.hpp"
 
+#include <cmath>
 #include <iostream>
 #include <optional>
 #include <vector>
@@ -57,6 +58,25 @@ int main()
     check(body->vertices.size() == 6, "the bound of an octahedron has its six corners");
     check(body->faces.size() == 8, "the bound of an octahedron has its eight faces: the redundant planes contribute none");
   }
+
+  // THE order: a sidecar's dop block follows it, and scripts/decompose_mesh.py holds the same table (DOP_DIRECTIONS).
+  const linalg::vec3 order[shared::DIRECTIONAL_BOUND_DIRECTIONS] = {
+      {1.f, 0.f, 0.f}, {0.f, 1.f, 0.f},  {0.f, 0.f, 1.f},  {1.f, 1.f, 0.f},  {1.f, -1.f, 0.f}, {1.f, 0.f, 1.f}, {1.f, 0.f, -1.f},
+      {0.f, 1.f, 1.f}, {0.f, 1.f, -1.f}, {1.f, 1.f, 1.f},  {1.f, 1.f, -1.f}, {1.f, -1.f, 1.f}, {1.f, -1.f, -1.f}};
+  for (uint32_t index = 0; index < shared::DIRECTIONAL_BOUND_DIRECTIONS; ++index)
+    check(shared::DIRECTIONAL_BOUND_DIRECTION_VECTORS[index] == order[index],
+          "the directions come in the order the sidecar and the script share");
+
+  const shared::directional_extents_t extents = shared::compute_directional_extents(octahedron);
+  check(extents[0].nearest == -1.f && extents[0].furthest == 1.f, "along x the octahedron reaches -1 and 1");
+  check(std::abs(extents[9].furthest - 1.f / std::sqrt(3.f)) < 1e-6f, "along a corner diagonal, a third of the way");
+  const Array<Plane, shared::DIRECTIONAL_BOUND_PLANES> from_extents =
+      shared::compute_directional_bound_planes_from_extents(extents);
+  bool same_planes = true;
+  for (uint32_t index = 0; index < bound.size(); ++index)
+    same_planes = same_planes && from_extents[index].point == bound[index].point &&
+                  from_extents[index].normal == bound[index].normal;
+  check(same_planes, "the planes from the extents are the planes from the points");
 
   const std::vector<linalg::vec3> single = {{2.f, 3.f, 4.f}};
   const Array<Plane, shared::DIRECTIONAL_BOUND_PLANES> point_bound = shared::compute_directional_bound_planes(single);

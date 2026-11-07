@@ -331,6 +331,12 @@ bool draw_mesh_inspector(shared::mesh_geometry_t &mesh, Span<const shared::colli
         if (pieces.size() != file.hulls.size())
           ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "a hull block is flat (the log names it), so it collides as its dop_26");
       }
+      else if (shape == shared::asset_collision_shape_t::Dops)
+      {
+        ImGui::TextDisabled("%zu 26-DOPs from the sidecar (%s)", file.dops.size(), sidecar.c_str());
+        if (pieces.size() != file.dops.size())
+          ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "a dop block closes nothing (the log names it), so it collides as its dop_26");
+      }
       else
         ImGui::TextDisabled("the asset collides as its %s (%s): %u piece(s)", shared::to_string(shape), sidecar.c_str(),
                             pieces.size());

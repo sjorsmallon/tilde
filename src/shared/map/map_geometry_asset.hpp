@@ -8,16 +8,19 @@
 // the asset's triangles. It bounds as its oriented box and collides as its
 // `.collision` sidecar says (geometry_def.md §11.6): its directional bound, its
 // triangles welded into a closed mesh and decomposed into convex pieces, or the
-// hulls an offline decomposer wrote (scripts/decompose_mesh.py), so a letter's
-// shadow has the letter's hole. The bake reads its triangles in world space.
-// Beside map_geometry.cpp, which is past its size.
+// pieces an offline decomposer wrote: the directional bound of each of its convex
+// pieces (scripts/decompose_mesh.py), or hulls of points, so a letter's shadow
+// has the letter's hole. The bake reads its triangles in world space. Beside
+// map_geometry.cpp, which is past its size.
 //
-//   collision_file ::= ws* word ws* | ws* hull (ws+ hull)* ws*
+//   collision_file ::= ws* word ws* | ws* hull (ws+ hull)* ws* | ws* dop (ws+ dop)* ws*
 //   word           ::= "dop_26" | "decompose_mesh_into_convex_pieces"
 //   hull           ::= "hull" (ws+ point)+
-//   point          ::= number ws+ number ws+ number
+//   dop            ::= "dop" (ws+ number ws+ number){13}     nearest then furthest along each direction,
+//   point          ::= number ws+ number ws+ number           in DIRECTIONAL_BOUND_DIRECTION_VECTORS' order
 
 #include "../assets/asset_types.hpp"
+#include "../geometry/directional_bounds.hpp"
 
 #include <optional>
 #include <string_view>
@@ -31,13 +34,15 @@ enum class asset_collision_shape_t : uint8_t
   Dop_26,
   Decompose_Mesh_Into_Convex_Pieces,
   Hulls,
+  Dops,
 };
 
-// The sidecar, read: the shape, and under Hulls one point list per block in asset space.
+// The sidecar, read: the shape, and per block in asset space a point list under Hulls, extents under Dops.
 struct asset_collision_file_t
 {
   asset_collision_shape_t                shape = asset_collision_shape_t::Dop_26;
   std::vector<std::vector<linalg::vec3>> hulls;
+  std::vector<directional_extents_t>     dops;
 };
 
 // The hull is plane enumeration, quartic in its points; a block past this is refused, not waited on.
@@ -45,8 +50,9 @@ inline constexpr size_t MAX_SIDECAR_HULL_POINTS = 64;
 
 const char* to_string(asset_collision_shape_t shape);
 
-// Nothing for a file that is none of the three forms, or a hull block that is not whole points, under four
-// or past MAX_SIDECAR_HULL_POINTS; each refusal logs, naming `file_name` and the block.
+// Nothing for a file that is none of the four forms, a hull block that is not whole points, under four or
+// past MAX_SIDECAR_HULL_POINTS, or a dop block that is not 26 numbers with each nearest at most its furthest;
+// each refusal logs, naming `file_name` and the block.
 [[nodiscard]] std::optional<asset_collision_file_t> try_parse_collision_file(std::string_view text,
                                                                              std::string_view file_name);
 
@@ -62,6 +68,13 @@ asset_collision_file_t read_asset_collision_file(const asset_mesh_source_t& sour
 try_build_collision_pieces_from_hulls(Span<const std::vector<linalg::vec3>> hulls, const linalg::vec3& scale,
                                       const linalg::vec3& position, const linalg::quatf& orientation,
                                       std::string_view file_name);
+
+// Each block's 26 planes under `scale` (a stretch tilts the diagonal ones; the count stays), at the pose, as
+// one piece. Nothing when a block closes nothing, logged naming `file_name` and the block.
+[[nodiscard]] std::optional<std::vector<collision_piece_t>>
+try_build_collision_pieces_from_dops(Span<const directional_extents_t> dops, const linalg::vec3& scale,
+                                     const linalg::vec3& position, const linalg::quatf& orientation,
+                                     std::string_view file_name);
 
 // The mesh when `geometry` is one sourced from an asset, else nothing.
 const mesh_geometry_t *find_asset_sourced_mesh(const mesh_geometry_t &geometry);

@@ -79,6 +79,7 @@ const char* to_string(asset_collision_shape_t shape)
     case asset_collision_shape_t::Dop_26: return "dop_26";
     case asset_collision_shape_t::Decompose_Mesh_Into_Convex_Pieces: return "decompose_mesh_into_convex_pieces";
     case asset_collision_shape_t::Hulls: return "hull";
+    case asset_collision_shape_t::Dops: return "dop";
   }
   fatal_error("to_string: asset_collision_shape_t {} is no member", (int)shape);
 }
@@ -106,31 +107,58 @@ std::optional<asset_collision_file_t> try_parse_collision_file(std::string_view 
          {asset_collision_shape_t::Dop_26, asset_collision_shape_t::Decompose_Mesh_Into_Convex_Pieces})
       if (tokens[0] == to_string(member))
         return asset_collision_file_t{.shape = member};
-  if (tokens.empty() || tokens[0] != to_string(asset_collision_shape_t::Hulls))
+  const bool hulls = !tokens.empty() && tokens[0] == to_string(asset_collision_shape_t::Hulls);
+  const bool dops  = !tokens.empty() && tokens[0] == to_string(asset_collision_shape_t::Dops);
+  if (!hulls && !dops)
   {
-    log_error("'{}' says neither dop_26, decompose_mesh_into_convex_pieces nor a list of hull blocks", file_name);
+    log_error("'{}' says neither dop_26, decompose_mesh_into_convex_pieces, a list of hull blocks nor a list of dop blocks",
+              file_name);
     return std::nullopt;
   }
 
-  asset_collision_file_t file{.shape = asset_collision_shape_t::Hulls};
+  const std::string_view keyword = tokens[0];
+  asset_collision_file_t file{.shape = hulls ? asset_collision_shape_t::Hulls : asset_collision_shape_t::Dops};
   std::vector<float>     numbers;
   for (size_t index = 1; index <= tokens.size(); ++index)
   {
-    if (index < tokens.size() && tokens[index] != to_string(asset_collision_shape_t::Hulls))
+    const size_t block = file.hulls.size() + file.dops.size() + 1;
+    if (index < tokens.size() && tokens[index] != keyword)
     {
       float                        value  = 0.f;
       const std::string_view       token  = tokens[index];
       const std::from_chars_result result = try_parse_number(token.data(), token.data() + token.size(), value);
       if (result.ec != std::errc{} || result.ptr != token.data() + token.size())
       {
-        log_error("'{}': hull block {} holds '{}', which is not a number", file_name, file.hulls.size() + 1, token);
+        log_error("'{}': {} block {} holds '{}', which is not a number", file_name, keyword, block, token);
         return std::nullopt;
       }
       numbers.push_back(value);
       continue;
     }
 
-    const size_t block = file.hulls.size() + 1;
+    if (dops)
+    {
+      if (numbers.size() != DIRECTIONAL_BOUND_PLANES)
+      {
+        log_error("'{}': dop block {} holds {} numbers; a dop takes {}, the nearest and furthest along each of {} directions",
+                  file_name, block, numbers.size(), DIRECTIONAL_BOUND_PLANES, DIRECTIONAL_BOUND_DIRECTIONS);
+        return std::nullopt;
+      }
+      directional_extents_t& extents = file.dops.emplace_back();
+      for (uint32_t direction = 0; direction < DIRECTIONAL_BOUND_DIRECTIONS; ++direction)
+      {
+        extents[direction] = {.nearest = numbers[2 * direction], .furthest = numbers[2 * direction + 1]};
+        if (extents[direction].nearest > extents[direction].furthest)
+        {
+          log_error("'{}': dop block {} reaches nearer ({}) than it does furthest ({}) along direction {}; it closes nothing",
+                    file_name, block, extents[direction].nearest, extents[direction].furthest, direction + 1);
+          return std::nullopt;
+        }
+      }
+      numbers.clear();
+      continue;
+    }
+
     if (numbers.size() % 3 != 0)
     {
       log_error("'{}': hull block {} holds {} numbers, which is not a whole number of points", file_name, block,
@@ -196,6 +224,55 @@ try_build_collision_pieces_from_hulls(Span<const std::vector<linalg::vec3>> hull
     {
       log_error("'{}': hull block {} is flat under the scale ({} {} {}); it closes nothing", file_name, block + 1,
                 scale.x, scale.y, scale.z);
+      return std::nullopt;
+    }
+    pieces.push_back({.bounds        = compute_point_bounds(body->vertices),
+                      .planes        = compute_polyhedron_planes(*body),
+                      .face_polygons = compute_polyhedron_face_polygons(*body)});
+  }
+  return pieces;
+}
+
+std::optional<std::vector<collision_piece_t>>
+try_build_collision_pieces_from_dops(Span<const directional_extents_t> dops, const linalg::vec3& scale,
+                                     const linalg::vec3& position, const linalg::quatf& orientation,
+                                     std::string_view file_name)
+{
+  if (scale.x == 0.f || scale.y == 0.f || scale.z == 0.f)
+  {
+    log_error("'{}': every dop block is flat under the scale ({} {} {}); it closes nothing", file_name, scale.x, scale.y,
+              scale.z);
+    return std::nullopt;
+  }
+
+  std::vector<collision_piece_t> pieces;
+  pieces.reserve(dops.count);
+  std::vector<Plane> placed;
+  for (size_t block = 0; block < dops.count; ++block)
+  {
+    const Array<Plane, DIRECTIONAL_BOUND_PLANES> local = compute_directional_bound_planes_from_extents(dops[block]);
+    placed.clear();
+    for (uint32_t index = 0; index < local.size(); ++index)
+    {
+      const linalg::vec3 point{local[index].point.x * scale.x, local[index].point.y * scale.y,
+                               local[index].point.z * scale.z};
+      const linalg::vec3 normal{local[index].normal.x / scale.x, local[index].normal.y / scale.y,
+                                local[index].normal.z / scale.z};
+      placed.push_back({.point  = position + linalg::rotate(orientation, point),
+                        .normal = linalg::rotate(orientation, linalg::normalize(normal))});
+    }
+
+    const linalg::vec3 low{dops[block][0].nearest * scale.x, dops[block][1].nearest * scale.y,
+                           dops[block][2].nearest * scale.z};
+    const linalg::vec3 high{dops[block][0].furthest * scale.x, dops[block][1].furthest * scale.y,
+                            dops[block][2].furthest * scale.z};
+    const linalg::vec3 center = position + linalg::rotate(orientation, (low + high) * 0.5f);
+    const float        radius = linalg::length((high - low) * 0.5f) + 1.f;
+    const std::optional<convex_polyhedron_t> body = try_build_convex_from_planes(placed, center, radius);
+    if (!body)
+    {
+      log_error("'{}': dop block {} closes nothing under the scale ({} {} {})", file_name, block + 1, scale.x, scale.y,
+                scale.z);
       return std::nullopt;
     }
     pieces.push_back({.bounds        = compute_point_bounds(body->vertices),
@@ -344,6 +421,17 @@ std::vector<collision_piece_t> compute_asset_mesh_collision_pieces(const mesh_ge
     {
       std::optional<std::vector<collision_piece_t>> pieces = try_build_collision_pieces_from_hulls(
           file.hulls, source.scale, mesh.position, mesh.orientation, collision_sidecar_path_for_mesh_asset(source.path));
+      if (!pieces)
+      {
+        log_error("{} collides as its dop_26", source.path);
+        return {compute_asset_mesh_directional_bound_piece(mesh)};
+      }
+      return std::move(*pieces);
+    }
+    case asset_collision_shape_t::Dops:
+    {
+      std::optional<std::vector<collision_piece_t>> pieces = try_build_collision_pieces_from_dops(
+          file.dops, source.scale, mesh.position, mesh.orientation, collision_sidecar_path_for_mesh_asset(source.path));
       if (!pieces)
       {
         log_error("{} collides as its dop_26", source.path);

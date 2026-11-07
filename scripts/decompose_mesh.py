@@ -1,11 +1,15 @@
-"""Decomposes a mesh asset into convex hulls and writes them as its .collision sidecar (geometry_def.md ss11.6).
+"""Decomposes a mesh asset into convex pieces and writes each piece's 26-DOP as its .collision sidecar
+(geometry_def.md ss11.6).
 
   python scripts/decompose_mesh.py resources/glb/mvmt.glb [--threshold 0.05] [--cpu]
 
 Run from the project root after building mesh_triangles (pip install -r scripts/decompose_mesh_requirements.txt).
-The triangles are the game's own decode, so the hulls are in the asset's space. cuacd decomposes on the GPU;
+The triangles are the game's own decode, so the pieces are in the asset's space. cuacd decomposes on the GPU;
 CoACD on the CPU when cuacd cannot import, finds no GPU, or --cpu asks. Neither is bit reproducible across
-machines; the sidecar is committed, never regenerated at build.
+machines; the sidecar is committed, never regenerated at build. Each piece is written as a `dop` block: how
+near and how far it reaches along each of the 13 directions, in the game's order (directional_bounds.hpp,
+DIRECTIONAL_BOUND_DIRECTION_VECTORS), so the loader builds its 26 planes directly and every piece casts a
+shadow volume (shadow_volume.hpp caps light-facing planes at 14; a DOP shows a light at most 13).
 """
 
 import argparse
@@ -16,7 +20,10 @@ import tempfile
 
 import numpy as np
 
-MAX_SIDECAR_HULL_POINTS = 64  # map_geometry_asset.hpp; the loader refuses a block past it
+DOP_DIRECTIONS = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1],
+                           [1, 1, 0], [1, -1, 0], [1, 0, 1], [1, 0, -1], [0, 1, 1], [0, 1, -1],
+                           [1, 1, 1], [1, 1, -1], [1, -1, 1], [1, -1, -1]], dtype=np.double)
+DOP_DIRECTIONS /= np.linalg.norm(DOP_DIRECTIONS, axis=1)[:, None]
 
 
 def read_obj(path):
@@ -31,22 +38,10 @@ def read_obj(path):
     return np.array(vertices, dtype=np.double), np.array(faces, dtype=np.int32)
 
 
-def cap_hull_points(points, cap):
-    """Quickhull stopped at `cap` vertices: the extremes along the 26 directions, then the vertex farthest
-    outside the hull so far, until `cap`. A subset of the hull's own vertices, so it lies inside the original."""
-    from scipy.spatial import ConvexHull
-    if len(points) <= cap:
-        return points
-    directions = np.array([[x, y, z] for x in (-1, 0, 1) for y in (-1, 0, 1) for z in (-1, 0, 1) if (x, y, z) != (0, 0, 0)])
-    kept = list(np.unique(np.argmax((points - points.mean(axis=0)) @ directions.T, axis=0)))
-    while len(kept) < cap:
-        planes = ConvexHull(points[kept]).equations
-        outside = (points @ planes[:, :3].T + planes[:, 3]).max(axis=1)
-        farthest = int(np.argmax(outside))
-        if outside[farthest] <= 1e-6:
-            break
-        kept.append(farthest)
-    return points[kept]
+def compute_dop_extents(points):
+    """The nearest and furthest reach of `points` along each direction: 13 pairs, the DOP that bounds them."""
+    along = points @ DOP_DIRECTIONS.T
+    return np.column_stack([along.min(axis=0), along.max(axis=0)])
 
 
 def try_decompose_with_cuacd(vertices, faces, threshold):
@@ -76,9 +71,16 @@ def try_decompose_with_cuacd(vertices, faces, threshold):
 def decompose_with_coacd(vertices, faces, threshold):
     import coacd
     coacd.set_log_level("warn")
-    parts = coacd.run_coacd(coacd.Mesh(vertices, faces), threshold=threshold, decimate=True,
-                            max_ch_vertex=MAX_SIDECAR_HULL_POINTS, seed=0)
+    parts = coacd.run_coacd(coacd.Mesh(vertices, faces), threshold=threshold, decimate=True, max_ch_vertex=64, seed=0)
     return [points for points, _ in parts]
+
+
+def write_dop_sidecar(path, hulls):
+    with open(path, "w", newline="\n") as file:
+        for points in hulls:
+            file.write("dop\n")
+            for nearest, furthest in compute_dop_extents(points):
+                file.write(f"  {nearest:.9g} {furthest:.9g}\n")
 
 
 def main():
@@ -99,22 +101,12 @@ def main():
     if hulls is None:
         hulls = decompose_with_coacd(vertices, faces, arguments.threshold)
         decomposer = "CoACD"
-    else:
-        hulls = [cap_hull_points(points, MAX_SIDECAR_HULL_POINTS) for points in hulls]
-
-    for index, points in enumerate(hulls):
-        if not 4 <= len(points) <= MAX_SIDECAR_HULL_POINTS:
-            sys.exit(f"decompose_mesh: {decomposer} hull {index + 1} has {len(points)} points; the loader takes four "
-                     f"to {MAX_SIDECAR_HULL_POINTS}. Nothing written.")
+    if not hulls:
+        sys.exit(f"decompose_mesh: {decomposer} found no pieces. Nothing written.")
 
     sidecar = os.path.splitext(arguments.mesh)[0] + ".collision"
-    with open(sidecar, "w", newline="\n") as file:
-        for points in hulls:
-            file.write("hull\n")
-            for x, y, z in points:
-                file.write(f"  {x:.9g} {y:.9g} {z:.9g}\n")
-
-    print(f"{sidecar}: {len(hulls)} hulls by {decomposer}, at most {max(len(points) for points in hulls)} points each")
+    write_dop_sidecar(sidecar, hulls)
+    print(f"{sidecar}: {len(hulls)} pieces by {decomposer}, each its 26-DOP")
 
 
 if __name__ == "__main__":
