@@ -505,6 +505,13 @@ void projector_reach(const entities::Entity* e, draw_lists_t& draws, const linal
   draw_projector_reach(draws, static_cast<const entities::Projector_Entity*>(e), position, color);
 }
 
+// A projected ball lives in its projector's picture; the sphere is only where it was placed, so it can be picked.
+void projected_ball_diagram(const entities::Entity*, draw_lists_t& draws, const linalg::vec3& position,
+                            color_t color, const entity_draw_settings_t&)
+{
+  draws.debug.wire_sphere(position, POINT_PICK_HALF_EXTENT, color);
+}
+
 // ---- the table ----------------------------------------------------------
 //
 // A row carries only what is constant for the TYPE. Anything read off the
@@ -608,6 +615,8 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
      .icon         = "spot_light",
      .draw_diagram = &projector_diagram,
      .draw_reach   = &projector_reach},
+
+    {.type = entity_type::Projected_Ball_Entity, .color = colors::yellow, .draw_diagram = &projected_ball_diagram},
 }};
 
 static_assert(rows_in_enum_order<&editor_data_per_entity_type_t::type>(EDITOR_DATA_PER_ENTITY_TYPE),

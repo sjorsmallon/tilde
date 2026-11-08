@@ -63,7 +63,8 @@ void push_snapshot_pose(interpolation_ring_t& ring, const snapshot_pose_t& pose)
 // One ring per replicated entity that carries a Render, keyed by uid; a remote
 // player is one entry like any other. A light gets a ring that never moves,
 // which costs INTERPOLATION_RING_CAPACITY poses and buys having no per-type
-// "does this move" flag to forget beside the field that actually does.
+// "does this move" flag to forget beside the field that actually does. A
+// projected ball has one too, its pose its picture uv (projector_plan.md ss3b).
 using interpolated_entities_t = std::unordered_map<shared::entity_uid_t, interpolation_ring_t>;
 
 // The ONE writer of the rings: pushes this tick's pose for every entity in the

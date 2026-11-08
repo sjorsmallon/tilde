@@ -2,6 +2,7 @@
 
 #include "assets/asset.hpp"
 #include "geometry/convex_hull.hpp"
+#include "lighting.hpp"
 #include "log.hpp"
 #include "shadow_volume.hpp"
 
@@ -47,6 +48,117 @@ std::vector<bool> compute_dark_cells(const assets::texture_asset_t& picture, uin
 
 } // namespace
 
+bool cover_dark_cells_with_rectangles(std::vector<bool>& dark, uint32_t columns, uint32_t rows,
+                                      std::vector<projector_mask_rectangle_t>& out)
+{
+  const auto cell = [&](uint32_t column, uint32_t row) -> std::vector<bool>::reference
+  { return dark[static_cast<size_t>(row) * columns + column]; };
+
+  const size_t first = out.size();
+  for (uint32_t row = 0; row < rows; ++row)
+    for (uint32_t column = 0; column < columns; ++column)
+    {
+      if (!cell(column, row))
+        continue;
+      if (out.size() - first >= MAX_PROJECTOR_MASK_RECTANGLES)
+        return true;
+      uint32_t column_end = column + 1;
+      while (column_end < columns && cell(column_end, row))
+        ++column_end;
+      uint32_t row_end = row + 1;
+      for (; row_end < rows; ++row_end)
+      {
+        bool whole_span_dark = true;
+        for (uint32_t c = column; c < column_end && whole_span_dark; ++c)
+          whole_span_dark = cell(c, row_end);
+        if (!whole_span_dark)
+          break;
+      }
+      for (uint32_t r = row; r < row_end; ++r)
+        for (uint32_t c = column; c < column_end; ++c)
+          cell(c, r) = false;
+      out.push_back({.u0 = static_cast<float>(column) / static_cast<float>(columns),
+                     .v0 = static_cast<float>(row) / static_cast<float>(rows),
+                     .u1 = static_cast<float>(column_end) / static_cast<float>(columns),
+                     .v1 = static_cast<float>(row_end) / static_cast<float>(rows)});
+    }
+  return false;
+}
+
+bool compute_projector_shadow_footprint(entity_uid_t projector, const scene_light_t& light,
+                                        const linalg::mat4f& picture_matrix, Span<const shadow_volume_t> volumes,
+                                        std::vector<bool>& cells, std::vector<projector_mask_rectangle_t>& out)
+{
+  constexpr uint32_t CELLS = PROJECTOR_MASK_GRID_LIMIT;
+  cells.assign(static_cast<size_t>(CELLS) * CELLS, false);
+
+  const Array<linalg::vec3f, 4> corners  = compute_projector_frame_corners(light, 1.f);
+  const linalg::vec3f           top_left = corners[3];
+  const linalg::vec3f           across   = corners[2] - corners[3];
+  const linalg::vec3f           down     = corners[0] - corners[3];
+
+  bool any_dark = false;
+  for (const shadow_volume_t& volume : volumes)
+  {
+    if (volume.light != projector || !volume.caster_casts_from_lens)
+      continue;
+
+    uint32_t column_begin = 0;
+    uint32_t row_begin    = 0;
+    uint32_t column_end   = CELLS;
+    uint32_t row_end      = CELLS;
+    {
+      float u0 = 1e9f, v0 = 1e9f, u1 = -1e9f, v1 = -1e9f;
+      bool  behind_the_lens = false;
+      for (int corner = 0; corner < 8; ++corner)
+      {
+        const linalg::vec3f point{(corner & 1) ? volume.caster_bounds.max.x : volume.caster_bounds.min.x,
+                                  (corner & 2) ? volume.caster_bounds.max.y : volume.caster_bounds.min.y,
+                                  (corner & 4) ? volume.caster_bounds.max.z : volume.caster_bounds.min.z};
+        const linalg::vec4  clip = picture_matrix * linalg::vec4{point.x, point.y, point.z, 1.f};
+        if (clip.w <= 0.f)
+        {
+          behind_the_lens = true;
+          break;
+        }
+        u0 = std::min(u0, (clip.x / clip.w) * 0.5f + 0.5f);
+        v0 = std::min(v0, (clip.y / clip.w) * 0.5f + 0.5f);
+        u1 = std::max(u1, (clip.x / clip.w) * 0.5f + 0.5f);
+        v1 = std::max(v1, (clip.y / clip.w) * 0.5f + 0.5f);
+      }
+      if (!behind_the_lens)
+      {
+        if (u1 <= 0.f || u0 >= 1.f || v1 <= 0.f || v0 >= 1.f)
+          continue;
+        column_begin = static_cast<uint32_t>(std::floor(std::clamp(u0, 0.f, 1.f) * CELLS));
+        row_begin    = static_cast<uint32_t>(std::floor(std::clamp(v0, 0.f, 1.f) * CELLS));
+        column_end   = std::min(CELLS, static_cast<uint32_t>(std::ceil(std::clamp(u1, 0.f, 1.f) * CELLS)));
+        row_end      = std::min(CELLS, static_cast<uint32_t>(std::ceil(std::clamp(v1, 0.f, 1.f) * CELLS)));
+      }
+    }
+
+    for (uint32_t row = row_begin; row < row_end; ++row)
+      for (uint32_t column = column_begin; column < column_end; ++column)
+      {
+        const float         u     = (static_cast<float>(column) + 0.5f) / static_cast<float>(CELLS);
+        const float         v     = (static_cast<float>(row) + 0.5f) / static_cast<float>(CELLS);
+        const linalg::vec3f point = top_left + across * u + down * v;
+        bool                inside = true;
+        for (uint32_t plane = 0; plane < volume.ring_plane_count && inside; ++plane)
+          inside = linalg::dot(volume.side_planes[plane].normal, point - volume.side_planes[plane].point) <= 0.f;
+        if (inside)
+        {
+          cells[static_cast<size_t>(row) * CELLS + column] = true;
+          any_dark                                         = true;
+        }
+      }
+  }
+
+  if (!any_dark)
+    return false;
+  return cover_dark_cells_with_rectangles(cells, CELLS, CELLS, out);
+}
+
 projector_mask_t compute_projector_mask_from_picture(const assets::texture_asset_t& picture,
                                                      assets::texture_asset texture, float dark_threshold)
 {
@@ -59,41 +171,10 @@ projector_mask_t compute_projector_mask_from_picture(const assets::texture_asset
   mask.rows    = std::min<uint32_t>(static_cast<uint32_t>(picture.height), PROJECTOR_MASK_GRID_LIMIT);
 
   std::vector<bool> dark = compute_dark_cells(picture, mask.columns, mask.rows, dark_threshold);
-  const auto        cell = [&](uint32_t column, uint32_t row) -> std::vector<bool>::reference
-  { return dark[static_cast<size_t>(row) * mask.columns + column]; };
-
-  for (uint32_t row = 0; row < mask.rows; ++row)
-    for (uint32_t column = 0; column < mask.columns; ++column)
-    {
-      if (!cell(column, row))
-        continue;
-      if (mask.rectangles.size() >= MAX_PROJECTOR_MASK_RECTANGLES)
-      {
-        mask.capped = true;
-        log_warning("[projector] the picture '{}' has more dark than {} rectangles cover; the rest is dark but not solid",
-                    assets::to_string(texture), MAX_PROJECTOR_MASK_RECTANGLES);
-        return mask;
-      }
-      uint32_t column_end = column + 1;
-      while (column_end < mask.columns && cell(column_end, row))
-        ++column_end;
-      uint32_t row_end = row + 1;
-      for (; row_end < mask.rows; ++row_end)
-      {
-        bool whole_span_dark = true;
-        for (uint32_t c = column; c < column_end && whole_span_dark; ++c)
-          whole_span_dark = cell(c, row_end);
-        if (!whole_span_dark)
-          break;
-      }
-      for (uint32_t r = row; r < row_end; ++r)
-        for (uint32_t c = column; c < column_end; ++c)
-          cell(c, r) = false;
-      mask.rectangles.push_back({.u0 = static_cast<float>(column) / static_cast<float>(mask.columns),
-                                 .v0 = static_cast<float>(row) / static_cast<float>(mask.rows),
-                                 .u1 = static_cast<float>(column_end) / static_cast<float>(mask.columns),
-                                 .v1 = static_cast<float>(row_end) / static_cast<float>(mask.rows)});
-    }
+  mask.capped            = cover_dark_cells_with_rectangles(dark, mask.columns, mask.rows, mask.rectangles);
+  if (mask.capped)
+    log_warning("[projector] the picture '{}' has more dark than {} rectangles cover; the rest is dark but not solid",
+                assets::to_string(texture), MAX_PROJECTOR_MASK_RECTANGLES);
   return mask;
 }
 

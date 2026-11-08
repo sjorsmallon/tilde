@@ -317,6 +317,12 @@ void shim_projector_entity_set_color(Entity& entity, const action_data_t& data, 
   set_color(self, data.as_set_color(), context);
 }
 
+void shim_projected_ball_entity_set_color(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Projected_Ball_Entity& self = *entity_as<Projected_Ball_Entity>(&entity);
+  set_color(self, data.as_set_color(), context);
+}
+
 void shim_logic_counter_entity_add(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Logic_Counter_Entity& self = *entity_as<Logic_Counter_Entity>(&entity);
@@ -1118,6 +1124,38 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     shim_projector_entity_set_color,
+    nullptr,   // Add
+    nullptr,   // Reset
+    nullptr,   // Kill
+    nullptr,   // Set_Health
+    nullptr,   // Damage
+    nullptr,   // Teleport
+    nullptr,   // Set_Velocity
+    nullptr,   // Add_Velocity
+    nullptr,   // Grant_Weapon
+    nullptr,   // Take_Weapon
+    nullptr,   // Set_Respawn_Point
+    nullptr,   // Complete_Level
+    nullptr,   // Start
+    nullptr,   // Stop
+    nullptr,   // Restart
+    nullptr,   // Pause
+    nullptr,   // Resume
+    nullptr,   // Start_Match
+    nullptr,   // End_Round
+    nullptr,   // Restart_Round
+    nullptr,   // End_Match
+    nullptr,   // Reverse
+    nullptr,   // Go_To
+    nullptr,   // Fire
+  },
+  {   // Projected_Ball_Entity
+    nullptr,   // Enable
+    nullptr,   // Disable
+    nullptr,   // Toggle_Enabled
+    nullptr,   // Play
+    nullptr,   // Stop_Playing
+    shim_projected_ball_entity_set_color,
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill

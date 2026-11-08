@@ -152,16 +152,22 @@ static projector_axes_t projector_axes(const scene_light_t &light)
   return {forward, linalg::normalize(linalg::cross(forward, up)), up};
 }
 
-shadow_projection_t projector_shadow_projection(const scene_light_t &light, uint32_t resolution)
+linalg::mat4f projector_picture_matrix(const scene_light_t &light)
 {
   const float            half_angle = projector_half_angle(light);
   const projector_axes_t axes       = projector_axes(light);
   const float            far_plane  = std::max(light.range, SHADOW_NEAR_PLANE * 2.f);
+  return linalg::perspective(half_angle * 2.f, std::max(light.aspect, 1e-3f), SHADOW_NEAR_PLANE, far_plane) *
+         linalg::look_at(light.position, light.position + axes.forward, axes.up);
+}
+
+shadow_projection_t projector_shadow_projection(const scene_light_t &light, uint32_t resolution)
+{
+  const float half_angle = projector_half_angle(light);
+  const float far_plane  = std::max(light.range, SHADOW_NEAR_PLANE * 2.f);
 
   shadow_projection_t projection;
-  projection.view_projection =
-      linalg::perspective(half_angle * 2.f, std::max(light.aspect, 1e-3f), SHADOW_NEAR_PLANE, far_plane) *
-      linalg::look_at(light.position, light.position + axes.forward, axes.up);
+  projection.view_projection = projector_picture_matrix(light);
   projection.texel_size_at_unit_distance =
       2.f * std::tan(half_angle) / (float)std::max<uint32_t>(resolution, 1u);
   projection.near_plane = SHADOW_NEAR_PLANE;

@@ -1,4 +1,5 @@
 #include "entities/generated/entities/player_entity_generated.hpp"
+#include "entities/generated/entities/projected_ball_entity_generated.hpp"
 #include "remote_interpolation.hpp"
 
 #include "../shared/entity_system.hpp"
@@ -85,6 +86,15 @@ void feed_interpolation_rings(interpolated_entities_t& rings, shared::Entity_Sys
       pose.teleport_count = player->teleport_count;
     }
     push_snapshot_pose(rings[entity.entity_id], pose);
+  }
+
+  for (const entities::Projected_Ball_Entity& ball : frame.entities_of_type<entities::Projected_Ball_Entity>())
+  {
+    snapshot_pose_t pose;
+    pose.position       = ball.uv;
+    pose.teleport_count = ball.respawn_count;
+    pose.server_tick    = server_tick;
+    push_snapshot_pose(rings[ball.entity_id], pose);
   }
 
   for (auto it = rings.begin(); it != rings.end();)

@@ -78,6 +78,9 @@ struct shadow_volume_t
   // Some receiver's bounds are within it. The collect puts the volumes that cut geometry AND reach one first,
   // so the renderer's few slots hold what changes the floor before what only darkens a beam.
   bool                                          reaches_receiver = false;
+  // The caster is a THING in front of what the picture lands on (an owner marked casts_solid_from_lens, a mover,
+  // a player), as against the room: the projected ball's dark is these volumes alone (projector_mask.hpp).
+  bool                                          caster_casts_from_lens = false;
   // Which piece cast it, in the collect's visiting order (static pieces, then every mover's): the solid shadow
   // cache's key beside the light (solid_shadows.hpp); an owner uid cannot be, two unowned brushes share one.
   uint32_t                                      caster_piece = 0;

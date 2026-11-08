@@ -377,11 +377,12 @@ enum class entity_type : uint16_t
   Fog_Volume_Entity = 36,
   Lens_Entity = 37,
   Projector_Entity = 38,
+  Projected_Ball_Entity = 39,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 39;
+constexpr uint32_t ENTITY_TYPE_COUNT = 40;
 
 enum class component_type : uint16_t
 {

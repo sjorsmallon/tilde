@@ -778,6 +778,8 @@ struct scene_uniform_t
   float       lenses[MAX_SCENE_LENSES][12]                  = {}; // centre xyz and the channel bits it passes as a whole number, half extents xyz and one spare, then its orientation as a quaternion xyzw
   float       lens_watcher_settings[4]                      = {}; // x how many of `lens_watchers` are live
   float       lens_watchers[MAX_SCENE_LENS_WATCHERS][20]    = {}; // eye xyz and the channel bits of the lens it holds, then its four outward sides as normal xyz and the normal's dot with the eye
+  float       projected_shape_settings[4]                   = {}; // x how many of `projected_shapes` are live
+  float       projected_shapes[MAX_SCENE_PROJECTED_SHAPES][8] = {}; // picture uv, radius in uv and the projector's shadow layer, then rgb the picture is multiplied by inside the disc and one spare
 };
 
 static_assert(sizeof(scene_uniform_t) ==
@@ -787,7 +789,8 @@ static_assert(sizeof(scene_uniform_t) ==
                       16 + 32 * MAX_SCENE_BEAM_RIPPLES +
                       16 +
                       32 * MAX_SCENE_REVEAL_CONES + 16 + 32 + 32 +
-                      48 * MAX_SCENE_FOG_VOLUMES + 16 + 48 * MAX_SCENE_LENSES + 16 + 80 * MAX_SCENE_LENS_WATCHERS,
+                      48 * MAX_SCENE_FOG_VOLUMES + 16 + 48 * MAX_SCENE_LENSES + 16 + 80 * MAX_SCENE_LENS_WATCHERS +
+                      16 + 32 * MAX_SCENE_PROJECTED_SHAPES,
               "scene_uniform_t must match scene.glsl's std140 SceneUniform exactly");
 static_assert(shared::MAX_SHADOW_CASCADES <= MAX_SHADOW_LAYERS &&
                   shared::MAX_SHADOW_CASCADES <= 4,
@@ -8123,6 +8126,39 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
       nearest_distance_squared = candidate.distance_squared;
     }
   }
+
+  // The layers are named now, so a shape can find its projector's. One whose projector is not in the pass, or has
+  // no layer, lands on no picture and is dropped.
+  if (pass.projected_shapes.size() > MAX_SCENE_PROJECTED_SHAPES)
+    log_error("[renderer] this view pass carries {} projected shapes; only the first {} are drawn",
+              pass.projected_shapes.size(), MAX_SCENE_PROJECTED_SHAPES);
+  uint32_t shape_count = 0;
+  for (uint32_t index = 0; index < pass.projected_shapes.size() && shape_count < MAX_SCENE_PROJECTED_SHAPES; ++index)
+  {
+    const projected_shape_t &shape = pass.projected_shapes[index];
+    float                    layer = -1.f;
+    for (int32_t light_index = 0; light_index < scene.light_count; ++light_index)
+    {
+      const shared::scene_light_t &light = pass.lights[(uint32_t)light_index];
+      if (light.kind == shared::light_kind_t::Projector && light.uid == shape.projector)
+      {
+        layer = scene.lights[light_index].radiance[3];
+        break;
+      }
+    }
+    if (layer < 0.f)
+      continue;
+    float *out = scene.projected_shapes[shape_count++];
+    out[0]     = shape.uv.x;
+    out[1]     = shape.uv.y;
+    out[2]     = shape.radius;
+    out[3]     = layer;
+    out[4]     = shape.color.x;
+    out[5]     = shape.color.y;
+    out[6]     = shape.color.z;
+    out[7]     = 0.f;
+  }
+  scene.projected_shape_settings[0] = (float)shape_count;
 
   if (scene.debug_flags & DEBUG_FLAG_RENDER_SHADOW_VISIBILITY)
   {

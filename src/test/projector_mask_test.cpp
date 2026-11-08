@@ -237,6 +237,47 @@ int main()
     check(!beside.has_value(), "outside the frame nothing is solid");
   }
 
+  printf("[pin] a thing in the light lands on the picture as rectangles; the room throws nothing\n");
+  {
+    // A crate on the floor, right of centre, a THING (casts_solid_from_lens); the floor is the room, unowned.
+    const shared::mesh_geometry_t   crate      = shared::make_box_mesh({50.f, 10.f, 0.f}, {10.f, 10.f, 10.f});
+    const Bounding_Volume_Hierarchy with_crate = build_world({floor, crate});
+    const shared::entity_uid_t      crate_owner_uid = system.spawn(entities::entity_type::Geometry_Owner_Entity);
+    entities::Geometry_Owner_Entity* crate_owner = system.get<entities::Geometry_Owner_Entity>(crate_owner_uid);
+    crate_owner->switch_state.value              = true;
+    crate_owner->casts_solid_from_lens           = true;
+    const std::vector<shared::entity_uid_t> owners = {shared::null_entity_uid, crate_owner_uid};
+
+    std::vector<shared::shadow_volume_t> crate_volumes;
+    (void)shared::compute_shadow_volumes(system, with_crate, owners, {}, {}, {}, masks, crate_volumes);
+    const linalg::mat4f matrix = shared::projector_picture_matrix(*scene_light);
+
+    std::vector<bool>                               cells;
+    std::vector<shared::projector_mask_rectangle_t> footprint;
+    const bool capped = shared::compute_projector_shadow_footprint(projector_uid, *scene_light, matrix, crate_volumes,
+                                                                   cells, footprint);
+    check(!footprint.empty() && !capped, "the crate lands on the picture, within the cap");
+    const auto covered = [&](const vec3& world)
+    {
+      const vec3 uv = project_to_uv(matrix, world);
+      for (const shared::projector_mask_rectangle_t& rectangle : footprint)
+        if (uv.x >= rectangle.u0 && uv.x < rectangle.u1 && uv.y >= rectangle.v0 && uv.y < rectangle.v1)
+          return true;
+      return false;
+    };
+    check(covered({50.f, 20.f, 0.f}), "the crate's top is dark");
+    check(!covered({-50.f, 0.f, 0.f}), "the floor beside it is lit: it is what the picture lands on");
+    check(!covered({0.f, 0.f, 0.f}), "and so is the frame's centre");
+    float area = 0.f;
+    for (const shared::projector_mask_rectangle_t& rectangle : footprint)
+      area += (rectangle.u1 - rectangle.u0) * (rectangle.v1 - rectangle.v0);
+    check(area > 0.005f && area < 0.05f, "the dark is about the crate's size");
+
+    std::vector<shared::projector_mask_rectangle_t> room_only;
+    (void)shared::compute_projector_shadow_footprint(projector_uid, *scene_light, matrix, volumes, cells, room_only);
+    check(room_only.empty(), "the floor alone, unowned, throws nothing on itself");
+  }
+
   printf("[pin] a projector with no picture casts no mask, and the cache computes a mask once\n");
   {
     projector->texture = assets::texture_asset::Missing;

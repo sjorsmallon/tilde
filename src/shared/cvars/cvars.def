@@ -152,6 +152,11 @@ Match :: cvars {
     // vote or a rotation wants -- neither of which exists yet.
     mp_game_over_seconds:   f32 = 10.0    @Server  "How long the final scoreboard is held before the map restarts (0 = hold it forever)"
 
+    // A projected ball (projector_plan.md ss3b) lives in its frame's uv, so its numbers are frame heights and seconds.
+    mp_projected_gravity:     f32 = 2.0   @Server  "Gravity on a projected ball, frame heights per second squared down the picture"
+    mp_projected_restitution: f32 = 0.5   @Server  "Fraction of its speed into a shape a projected ball keeps coming back"
+    mp_projected_friction:    f32 = 4.0   @Server  "Per-second fraction of its speed along a shape a projected ball loses while touching it"
+
     // The fewest CLIENTS WITH A BODY that can leave warmup, and then only once
     // every one of them has voted `ready`. Joined players, not connections:
     // four people who are all spectating are not a match. Bots neither count

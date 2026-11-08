@@ -437,4 +437,17 @@ Projector_Entity::Projector_Entity()
   type = entity_type::Projector_Entity;
 }
 
+Projected_Ball_Entity::Projected_Ball_Entity()
+  : projector{},
+    radius(0.03f),
+    color({0.05f, 0.05f, 0.05f}),
+    spawn_uv({0.5f, 0.1f, 0.0f}),
+    spawn_velocity{},
+    uv{},
+    velocity{},
+    respawn_count{}
+{
+  type = entity_type::Projected_Ball_Entity;
+}
+
 } // namespace entities

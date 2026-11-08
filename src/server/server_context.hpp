@@ -280,6 +280,10 @@ struct server_context_t
  // allocated once but "reused" per shot, expected to be sized once and then just repopulated for every shot fired by clients.
   shared::posed_players_t rewind_scratch;
 
+  // What a projected ball steps through this tick (projected_ball_system.cpp); only the capacity lives on.
+  std::vector<shared::projector_mask_rectangle_t> projected_ball_solids;
+  std::vector<bool>                               projected_ball_cells;
+
   // A `map` console line, resolved but not yet serviced. Outside the reset
   // scope because the request outlives the world it was made in: it is a
   // REQUEST rather than a change -- the reload frees the world, the inbox and

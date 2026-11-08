@@ -30,6 +30,7 @@
 #include "systems/inventory_system.hpp"
 #include "systems/mover_system.hpp"
 #include "systems/bounce_body_system.hpp"
+#include "systems/projected_ball_system.hpp"
 #include "systems/ping_system.hpp"
 #include "systems/player_input_system.hpp"
 #include "systems/respawn_system.hpp"
@@ -154,6 +155,7 @@ bool Tick()
                     context.cvars->map_respawn_delay_seconds);
 
     update_bounce_bodies(context, world, tick_dt);
+    update_projected_balls(context, world, tick_dt);
     update_dropped_weapons(context, tick_dt);
     update_weapon_emancipation_grills(context);
 

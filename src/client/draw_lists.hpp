@@ -63,6 +63,7 @@ struct draw_lists_t
   uint32_t                                             held_lens_channels = 0;
   std::vector<shared::lens_watcher_t>                  lens_watchers;
   std::vector<renderer::beam_t>                        beams;
+  std::vector<renderer::projected_shape_t>             projected_shapes;
   std::vector<renderer::custom_draw_t>                 custom;
   float                                                seconds = 0.0f;
 
@@ -131,6 +132,7 @@ struct draw_lists_t
     held_lens_channels = 0;
     lens_watchers.clear();
     beams.clear();
+    projected_shapes.clear();
     custom.clear();
     debug.advance_retire_timers(delta_seconds);
     seconds += delta_seconds;
@@ -153,6 +155,7 @@ struct draw_lists_t
     pass.held_lens_channels = held_lens_channels;
     pass.lens_watchers     = lens_watchers;
     pass.beams             = beams;
+    pass.projected_shapes  = projected_shapes;
     pass.seconds          = seconds;
     pass.debug_channel = debug_channel;
     pass.particles = particles;

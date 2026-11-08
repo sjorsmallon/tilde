@@ -259,6 +259,8 @@ int main()
         entity_type::Lens_Entity,
         // Through Enabled and Light.
         entity_type::Projector_Entity,
+        // Every field of its own: the server integrates its uv.
+        entity_type::Projected_Ball_Entity,
     };
     Span<const entity_type> replicated = replicated_entity_types();
 

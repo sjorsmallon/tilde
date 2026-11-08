@@ -4572,6 +4572,117 @@ constexpr field_info_t Projector_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t Projected_Ball_Entity_FIELDS[] = {
+  {.name = "entity_id",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Projected_Ball_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Ball_Entity::entity_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Projected_Ball_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Ball_Entity::position),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "orientation",
+   .type = FIELD_TYPE_QUAT,
+   .offset = (uint32_t)offsetof(Projected_Ball_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Ball_Entity::orientation),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Projected_Ball_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Ball_Entity::name),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "projector",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Projected_Ball_Entity, projector),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Ball_Entity::projector),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "radius",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Projected_Ball_Entity, radius),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Ball_Entity::radius),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "color",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Projected_Ball_Entity, color),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Ball_Entity::color),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "spawn_uv",
+   .type = FIELD_TYPE_V3_EXACT,
+   .offset = (uint32_t)offsetof(Projected_Ball_Entity, spawn_uv),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Ball_Entity::spawn_uv),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "spawn_velocity",
+   .type = FIELD_TYPE_V3_EXACT,
+   .offset = (uint32_t)offsetof(Projected_Ball_Entity, spawn_velocity),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Ball_Entity::spawn_velocity),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "uv",
+   .type = FIELD_TYPE_V3_EXACT,
+   .offset = (uint32_t)offsetof(Projected_Ball_Entity, uv),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Ball_Entity::uv),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "velocity",
+   .type = FIELD_TYPE_V3_EXACT,
+   .offset = (uint32_t)offsetof(Projected_Ball_Entity, velocity),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Ball_Entity::velocity),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "respawn_count",
+   .type = FIELD_TYPE_U8,
+   .offset = (uint32_t)offsetof(Projected_Ball_Entity, respawn_count),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Ball_Entity::respawn_count),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Box_Volume", {Box_Volume_FIELDS, 2}, (uint32_t)sizeof(Box_Volume)},
   {"Enabled", {Enabled_FIELDS, 1}, (uint32_t)sizeof(Enabled)},
@@ -4629,6 +4740,7 @@ Entity* construct_Reveal_Light_Entity(void* memory) { return new (memory) Reveal
 Entity* construct_Fog_Volume_Entity(void* memory) { return new (memory) Fog_Volume_Entity(); }
 Entity* construct_Lens_Entity(void* memory) { return new (memory) Lens_Entity(); }
 Entity* construct_Projector_Entity(void* memory) { return new (memory) Projector_Entity(); }
+Entity* construct_Projected_Ball_Entity(void* memory) { return new (memory) Projected_Ball_Entity(); }
 
 Entity* as_base_Player_Spawn_Entity(void* memory) { return static_cast<Entity*>((Player_Spawn_Entity*)memory); }
 Entity* as_base_Player_Spectate_Entity(void* memory) { return static_cast<Entity*>((Player_Spectate_Entity*)memory); }
@@ -4668,6 +4780,7 @@ Entity* as_base_Reveal_Light_Entity(void* memory) { return static_cast<Entity*>(
 Entity* as_base_Fog_Volume_Entity(void* memory) { return static_cast<Entity*>((Fog_Volume_Entity*)memory); }
 Entity* as_base_Lens_Entity(void* memory) { return static_cast<Entity*>((Lens_Entity*)memory); }
 Entity* as_base_Projector_Entity(void* memory) { return static_cast<Entity*>((Projector_Entity*)memory); }
+Entity* as_base_Projected_Ball_Entity(void* memory) { return static_cast<Entity*>((Projected_Ball_Entity*)memory); }
 
 constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, false, false, nullptr, nullptr}, // Invalid
@@ -4709,6 +4822,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"fog_volume_entity", "Fog Volume", {Fog_Volume_Entity_FIELDS, 9}, (uint32_t)sizeof(Fog_Volume_Entity), (uint32_t)alignof(Fog_Volume_Entity), 3u, false, true, false, construct_Fog_Volume_Entity, as_base_Fog_Volume_Entity},
   {"lens_entity", "Lens", {Lens_Entity_FIELDS, 8}, (uint32_t)sizeof(Lens_Entity), (uint32_t)alignof(Lens_Entity), 259u, false, true, true, construct_Lens_Entity, as_base_Lens_Entity},
   {"projector_entity", "Projector", {Projector_Entity_FIELDS, 11}, (uint32_t)sizeof(Projector_Entity), (uint32_t)alignof(Projector_Entity), 33282u, false, true, true, construct_Projector_Entity, as_base_Projector_Entity},
+  {"projected_ball_entity", "Projected Ball", {Projected_Ball_Entity_FIELDS, 12}, (uint32_t)sizeof(Projected_Ball_Entity), (uint32_t)alignof(Projected_Ball_Entity), 0u, false, true, false, construct_Projected_Ball_Entity, as_base_Projected_Ball_Entity},
 };
 
 constexpr int32_t COMPONENT_OFFSETS[][16] = {
@@ -4751,9 +4865,10 @@ constexpr int32_t COMPONENT_OFFSETS[][16] = {
   {(int32_t)offsetof(Fog_Volume_Entity, volume), (int32_t)offsetof(Fog_Volume_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Fog_Volume_Entity
   {(int32_t)offsetof(Lens_Entity, volume), (int32_t)offsetof(Lens_Entity, switch_state), -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Lens_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Lens_Entity
   {-1, (int32_t)offsetof(Projector_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Projector_Entity, light), -1, -1, -1, -1, -1, (int32_t)offsetof(Projector_Entity, rides)}, // Projector_Entity
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Projected_Ball_Entity
 };
 
-constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 26;
+constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 27;
 constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Player_Spawn_Entity,
   entity_type::Player_Spectate_Entity,
@@ -4781,9 +4896,10 @@ constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Fog_Volume_Entity,
   entity_type::Lens_Entity,
   entity_type::Projector_Entity,
+  entity_type::Projected_Ball_Entity,
 };
 
-constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 32;
+constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 33;
 constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Player_Entity,
   entity_type::Weapon_Entity,
@@ -4817,6 +4933,7 @@ constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Fog_Volume_Entity,
   entity_type::Lens_Entity,
   entity_type::Projector_Entity,
+  entity_type::Projected_Ball_Entity,
 };
 
 } // namespace
@@ -5374,6 +5491,7 @@ Entity* create_entity(entity_type type)
     case entity_type::Fog_Volume_Entity: return new Fog_Volume_Entity();
     case entity_type::Lens_Entity: return new Lens_Entity();
     case entity_type::Projector_Entity: return new Projector_Entity();
+    case entity_type::Projected_Ball_Entity: return new Projected_Ball_Entity();
   }
   assert(false && "create_entity: not a valid entity_type");
   return nullptr;
@@ -5433,6 +5551,7 @@ void destroy_entity(Entity* entity)
     case entity_type::Fog_Volume_Entity: delete static_cast<Fog_Volume_Entity*>(entity); return;
     case entity_type::Lens_Entity: delete static_cast<Lens_Entity*>(entity); return;
     case entity_type::Projector_Entity: delete static_cast<Projector_Entity*>(entity); return;
+    case entity_type::Projected_Ball_Entity: delete static_cast<Projected_Ball_Entity*>(entity); return;
   }
   assert(false && "destroy_entity: entity carries an invalid tag");
 }
@@ -5447,6 +5566,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xa021dda9u;
+const uint32_t SCHEMA_HASH = 0x73b30906u;
 
 } // namespace entities

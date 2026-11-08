@@ -793,6 +793,7 @@ shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const
     {
       ++report.cast;
       volume.caster_piece   = piece.key;
+      volume.caster_casts_from_lens = piece.role == piece_role_t::Casts_From_Lens;
       if (volume.solid_shadows == entities::Solid_Shadows::Solid_From_Lens_To_Shadow &&
           piece.role != piece_role_t::Casts_From_Lens)
         volume.solid_shadows = entities::Solid_Shadows::Shadow_Volumes_Only;

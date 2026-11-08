@@ -29,6 +29,8 @@
 #define MAX_LENSES 16
 // renderer.hpp's MAX_SCENE_LENS_WATCHERS, kept one number by the same assert.
 #define MAX_LENS_WATCHERS 16
+// renderer.hpp's MAX_SCENE_PROJECTED_SHAPES, kept one number by the same assert.
+#define MAX_PROJECTED_SHAPES 16
 // shadow_volume.hpp's MAX_SHADOW_VOLUME_PLANES and SHADOW_VOLUME_SIDE_SLOTS, kept one number by
 // renderer/shadow_volumes.cpp's asserts. A volume's planes [0, SIDE_SLOTS) are its sides, the rest its
 // light-facing planes.
@@ -113,6 +115,12 @@ struct Lens {
 struct LensWatcher {
     vec4 eye;
     vec4 sides[4];
+};
+
+// renderer.hpp's projected_shape_t: a disc in a projector's picture, drawn by direct_light.glsl's projector_mask.
+struct ProjectedShape {
+    vec4 uv_radius_layer; // picture uv, the radius in uv, the projector's shadow layer
+    vec4 color;           // rgb the picture is multiplied by inside the disc
 };
 
 // One box of fog (fog_cells.comp): its lowest corner (xyz) and its density per world unit (w); its highest corner (xyz) and
@@ -260,6 +268,9 @@ layout(set = 3, binding = 1) uniform SceneUniform {
     // x = how many of `lens_watchers` are live.
     vec4        lens_watcher_settings;
     LensWatcher lens_watchers[MAX_LENS_WATCHERS];
+    // x = how many of `projected_shapes` are live.
+    vec4           projected_shape_settings;
+    ProjectedShape projected_shapes[MAX_PROJECTED_SHAPES];
 } scene;
 
 // The line of sight through `position` (0..1 across the pass's view, y down), one unit of view depth long.

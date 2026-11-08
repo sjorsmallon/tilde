@@ -418,6 +418,19 @@ inline constexpr uint32_t MAX_SCENE_SHADOW_VOLUMES = 256;
 
 // scene.glsl's MAX_BEAMS, kept one number by the same assert.
 inline constexpr uint32_t MAX_SCENE_BEAMS = 8;
+// scene.glsl's MAX_PROJECTED_SHAPES, kept one number by the same assert.
+inline constexpr uint32_t MAX_SCENE_PROJECTED_SHAPES = 16;
+
+// A disc in a projector's picture (projector_plan.md ss3b): where the frame of the light with `projector`'s uid
+// lands, the picture is multiplied by `color` inside the disc. direct_light.glsl's projector_mask draws it from
+// the scene block; nothing is written into the picture.
+struct projected_shape_t
+{
+  shared::entity_uid_t projector = shared::null_entity_uid;
+  linalg::vec2f        uv        = {0.f, 0.f};
+  float                radius    = 0.f;
+  linalg::vec3f        color     = {0.f, 0.f, 0.f};
+};
 // scene.glsl's MAX_BEAM_PIECES and MAX_BEAM_PLANES, kept one number by the same assert: the carved pieces
 // of every beam this pass draws, and their cut planes, shared by the pass's beams. A piece's planes ride
 // one word as first | count << 16.
@@ -664,6 +677,8 @@ struct view_pass_t
   Span<const shared::lens_watcher_t>        lens_watchers = {};
   // Filled by the beam pass after the scene pass, for a perspective pass only. Past MAX_SCENE_BEAMS the tail is dropped.
   Span<const beam_t>                        beams = {};
+  // The discs drawn into projector pictures. Past MAX_SCENE_PROJECTED_SHAPES the tail is dropped.
+  Span<const projected_shape_t>             projected_shapes = {};
   // The clock a shader animates by; the caller's, so what pausing does to it is the caller's decision.
   float                                     seconds   = 0.0f;
   Span<const particle_emitter_parameters_t> particles = {};     // compute sequenced before the render pass

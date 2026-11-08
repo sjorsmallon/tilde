@@ -186,7 +186,9 @@ float sample_shadow_layer(int layer, Light_Arrival arrival, vec3 world_position,
 
 // What a projector's picture says at one point: its colour inside the frame, black outside it (the sampler's
 // border), black behind the lens, and 1 for every other kind of light. A projector past the pool has no
-// layer and so no frame: it lights nothing rather than everything in front of it.
+// layer and so no frame: it lights nothing rather than everything in front of it. The scene's projected
+// shapes on this layer (projector_plan.md ss3b) multiply the picture inside their discs, measured in uv as
+// the server moves them, so a disc is as wide on the wall as the frame is.
 vec3 projector_mask(Light light, vec3 world_position)
 {
     if (int(light.spot_params.w) != LIGHT_TYPE_PROJECTOR)
@@ -197,8 +199,19 @@ vec3 projector_mask(Light light, vec3 world_position)
     vec4 clip = scene.shadow_view_projection[layer] * vec4(world_position, 1.0);
     if (clip.w <= 0.0)
         return vec3(0.0);
-    vec2 uv = (clip.xy / clip.w) * 0.5 + 0.5;
-    return texture(projectorPictures, vec3(uv, float(shadow_pool_layer(layer)))).rgb;
+    vec2 uv      = (clip.xy / clip.w) * 0.5 + 0.5;
+    vec3 picture = texture(projectorPictures, vec3(uv, float(shadow_pool_layer(layer)))).rgb;
+    int  shape_count = int(scene.projected_shape_settings.x);
+    for (int index = 0; index < shape_count; ++index)
+    {
+        vec4 shape = scene.projected_shapes[index].uv_radius_layer;
+        if (int(shape.w) != layer)
+            continue;
+        vec2 away = uv - shape.xy;
+        if (dot(away, away) < shape.z * shape.z)
+            picture *= scene.projected_shapes[index].color.rgb;
+    }
+    return picture;
 }
 
 // Whether a projector's frame holds the point at all: inside its picture's uv square and in front of the

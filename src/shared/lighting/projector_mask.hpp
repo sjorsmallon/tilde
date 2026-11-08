@@ -10,8 +10,10 @@
 #include "array.hpp"
 #include "assets/asset_id.hpp"
 #include "assets/asset_types.hpp"
+#include "entity_uid.hpp"
 #include "linalg.hpp"
 #include "map/map_geometry.hpp"
+#include "span.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -21,6 +23,8 @@ namespace shared
 {
 
 struct shadow_light_t;
+struct shadow_volume_t;
+struct scene_light_t;
 
 // A texel whose mean of r, g and b is below this fraction of white is dark; the shader multiplies the same
 // bytes into the light, so the solid dark is where the drawn light is below a quarter.
@@ -54,12 +58,28 @@ struct projector_mask_t
   bool                                    capped = false;
 };
 
-// The dark of `picture` as rectangles: the grid's dark cells covered greedily, each rectangle the widest run
-// from the first uncovered dark cell in row order, grown down while every cell of the next row's span is dark
-// and uncovered.
+// A grid's dark cells covered greedily, each rectangle the widest run from the first uncovered dark cell in
+// row order, grown down while every cell of the next row's span is dark and uncovered; `dark` is cleared
+// where covered. True when MAX_PROJECTOR_MASK_RECTANGLES ran out with dark left.
+[[nodiscard]] bool cover_dark_cells_with_rectangles(std::vector<bool>& dark, uint32_t columns, uint32_t rows,
+                                                    std::vector<projector_mask_rectangle_t>& out);
+
+// The dark of `picture` as rectangles of its grid, covered as above.
 [[nodiscard]] projector_mask_t compute_projector_mask_from_picture(const assets::texture_asset_t& picture,
                                                                    assets::texture_asset          texture,
                                                                    float dark_threshold);
+
+// The shadow of the THINGS in a projector's light on its picture (projector_plan.md ss3b): the footprint of each
+// of its shadow volumes whose caster casts from the lens (an owner marked casts_solid_from_lens, a mover, a
+// player), appended to `out` as rectangles of a PROJECTOR_MASK_GRID_LIMIT grid. A volume's silhouette planes
+// pass through the lens, so each is a half-plane of picture uv and a cell is dark when its centre is inside
+// every one; where the volume begins is not read. The room, an unmarked caster, throws nothing: it is what the
+// picture lands on. `cells` is the caller's grid scratch. True when the cover was capped.
+[[nodiscard]] bool compute_projector_shadow_footprint(entity_uid_t projector, const scene_light_t& light,
+                                                      const linalg::mat4f&                     picture_matrix,
+                                                      Span<const shadow_volume_t>              volumes,
+                                                      std::vector<bool>&                       cells,
+                                                      std::vector<projector_mask_rectangle_t>& out);
 
 struct projector_mask_cache_t
 {

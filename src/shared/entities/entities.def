@@ -883,3 +883,17 @@ Projector_Entity :: entity @predicted is Colorable, Switchable {
     // What the frame shows. Missing is no picture: a plain white frame.
     texture:            texture_asset = .Missing @Editable
 }
+
+// A ball in a projector's picture (projector_plan.md ss3b): a disc in picture uv (u right, v down, in [0, 1])
+// dropped from its spawn and moved by update_projected_balls against the picture's dark and the players'
+// shadows, back to its spawn when its centre reaches the frame's edge. uv and velocity are 2D; z is unused.
+Projected_Ball_Entity :: entity is Colorable {
+    projector:       entity                    @Networked @Editable
+    radius:          f32 = 0.03                @Networked @Editable
+    color:           v3 = {0.05, 0.05, 0.05}   @Fully_Serializable
+    spawn_uv:        v3_exact = {0.5, 0.1, 0}  @Networked @Editable
+    spawn_velocity:  v3_exact                  @Networked @Editable
+    uv:              v3_exact                  @Networked
+    velocity:        v3_exact                  @Networked
+    respawn_count:   u8                        @Networked
+}

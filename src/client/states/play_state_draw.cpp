@@ -12,6 +12,7 @@
 #include "../weapon_fire_audio.hpp"
 #include "../surface_audio.hpp"
 #include "../held_snapshot.hpp"
+#include "../remote_interpolation.hpp"
 #include "../../shared/cvars/cvar_console.hpp"
 #include "../../shared/movement/player_constants.hpp"
 #include "../../shared/round_phase_rules.hpp"
@@ -445,6 +446,22 @@ void Play_State::draw_support_planks(client_context_t &ctx, const draw_inputs_t 
   }
 }
 
+// Every projected ball as the disc the shader draws into its projector's picture, at the uv its interpolation
+// ring holds (remote_interpolation.cpp feeds a ball's uv as its pose), the replicated uv when the ring is empty.
+static void add_projected_shapes(const client_context_t &ctx, draw_lists_t &scene)
+{
+  for (const entities::Projected_Ball_Entity &ball :
+       ctx.world.session.entity_system.entities_of_type<entities::Projected_Ball_Entity>())
+  {
+    linalg::vec3f uv   = ball.uv;
+    const auto    ring = ctx.replication.interpolated_entities.find(ball.entity_id);
+    if (ring != ctx.replication.interpolated_entities.end() && ring->second.pushed != 0)
+      uv = sample_interpolated_pose(ring->second, ctx.replication.interpolation_cursor.tick).pose.position;
+    scene.projected_shapes.push_back(
+        {.projector = ball.projector, .uv = {uv.x, uv.y}, .radius = ball.radius, .color = ball.color});
+  }
+}
+
 void Play_State::draw_shadow_debug_and_volumes(client_context_t &ctx, const draw_inputs_t &frame)
 {
   shared::Entity_System &entity_system = ctx.world.session.entity_system;
@@ -453,6 +470,7 @@ void Play_State::draw_shadow_debug_and_volumes(client_context_t &ctx, const draw
   scene.ripples = ctx.visuals.wall_ripples.ripples;
   scene.beam_ripples = ctx.visuals.beam_ripples.ripples;
   scene.shadow_volumes = ctx.visuals.drawn_shadow_volumes;
+  add_projected_shapes(ctx, scene);
   if (ctx.cvars->r_shadow_plank)
     draw_support_planks(ctx, frame);
   if (ctx.cvars->cl_shadow_volume_debug)

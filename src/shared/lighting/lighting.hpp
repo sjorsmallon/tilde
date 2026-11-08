@@ -151,6 +151,7 @@ inline constexpr float SHADOW_NEAR_PLANE = 1.f;
 // far plane, its `up` as the map's up. The one matrix per projector: the shadow map's and the picture's uv
 // (direct_light.glsl's projector_mask reads the same layer's matrix), so a projector always takes a layer.
 // The half angle is clamped as a spot's is.
+[[nodiscard]] linalg::mat4f projector_picture_matrix(const scene_light_t &light);
 [[nodiscard]] shadow_projection_t projector_shadow_projection(const scene_light_t &light,
                                                               uint32_t             resolution);
 

@@ -223,6 +223,7 @@ set(ENTITY_IO_HANDLERS
     src/server/traits/path_following.cpp
     src/server/entities/point_light_entity.cpp
     src/server/entities/projector_entity.cpp
+    src/server/entities/projected_ball_entity.cpp
     src/server/entities/spot_light_entity.cpp
     src/server/entities/player_entity.cpp
     src/server/entities/game_rules_entity.cpp
@@ -589,6 +590,7 @@ add_library(game_shared STATIC
     src/shared/lighting/player_shadow_casters.cpp
     src/shared/lighting/support_planks.cpp
     src/shared/lighting/projector_mask.cpp
+    src/shared/lighting/projected_ball.cpp
     src/shared/subtick.hpp
     src/shared/subtick.cpp
     # Both channels' tables and fire helpers. Neither references a handler, so
@@ -1050,6 +1052,7 @@ add_library(game_server SHARED
     src/server/systems/bot_system.cpp
     src/server/systems/game_rules_system.cpp
     src/server/systems/bounce_body_system.cpp
+    src/server/systems/projected_ball_system.cpp
     src/server/systems/inventory_system.cpp
     src/server/systems/respawn_system.cpp
 )
@@ -1272,8 +1275,13 @@ add_game_test(solid_shadow_test)
 add_game_test(asset_mesh_collision_test)
 add_game_test(directional_bounds_test)
 # A projector picture's dark is rectangles of its grid, cast from the glass as pieces: a hull walks into the
-# dark half of the frame and is stopped, and a texel's uv lands where the frame's matrix maps it.
+# dark half of the frame and is stopped, and a texel's uv lands where the frame's matrix maps it; a thing in the
+# light (casts_solid_from_lens) lands on the picture as rectangles and the room throws nothing on itself.
 add_game_test(projector_mask_test)
+# A projected ball (ss3b) falls onto a rectangle and sits, bounces by its restitution, rolls to a stop, falls
+# through a gap out of the frame, and is pushed out of and carried by a rectangle; a hitbox's silhouette lands
+# on the picture where the frame's matrix maps it, and one behind the lens or outside the frame casts nothing.
+add_game_test(projected_ball_test)
 
 # CVar / command: tables, text conversion, console dispatch, argument binders,
 # and the @Mirrored wire path. It compiles BOTH generated binder TUs and defines

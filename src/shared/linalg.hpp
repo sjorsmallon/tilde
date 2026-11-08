@@ -120,6 +120,36 @@ struct mat4f
 
 // --- Free Functions ---
 
+// Vec2 Operations
+template <typename T>
+inline vec2_t<T> operator+(const vec2_t<T> &a, const vec2_t<T> &b)
+{
+  return {a.x + b.x, a.y + b.y};
+}
+
+template <typename T>
+inline vec2_t<T> operator-(const vec2_t<T> &a, const vec2_t<T> &b)
+{
+  return {a.x - b.x, a.y - b.y};
+}
+
+template <typename T> inline vec2_t<T> operator*(const vec2_t<T> &a, T s)
+{
+  return {a.x * s, a.y * s};
+}
+
+template <typename T> inline vec2_t<T> operator*(T s, const vec2_t<T> &a)
+{
+  return a * s;
+}
+
+template <typename T> inline T dot(const vec2_t<T> &a, const vec2_t<T> &b)
+{
+  return a.x * b.x + a.y * b.y;
+}
+
+inline float length(const vec2 &v) { return std::sqrt(dot(v, v)); }
+
 // Vec3 Operations
 template <typename T>
 inline vec3_t<T> operator+(const vec3_t<T> &a, const vec3_t<T> &b)
