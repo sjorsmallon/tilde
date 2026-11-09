@@ -58,6 +58,8 @@ Damage_Type :: enum { Normal, Orange, Teal }
 Hit_Region :: enum { Head, Torso, Legs }
 
 Light_Mode :: enum { Baked, Mixed, Dynamic }
+// What a Trigger_Volume_Entity listens to: anything in Touchable's `by` list, players only, or projected balls only.
+Toucher_Filter :: enum { Anything, Players, Projected_Balls }
 // Which of a light's dark is a mover (shared/lighting/solid_shadows.hpp, projector_plan.md ss1c). Shadow_Volumes_Only:
 // the dark air, from the caster to where its shadow lands. Solid_From_Lens_To_Shadow: the whole pyramid from the lens
 // through the caster to where its shadow lands, so a hull whose shadow lies on a caster's shadow is held at any depth.
@@ -308,7 +310,7 @@ Counting :: trait requires Counter {
 
 Touchable :: trait requires Box_Volume, Enabled {
     emits Touched(), Left()
-    by    Player_Entity
+    by    Player_Entity, Projected_Ball_Entity
 }
 
 Mortal :: trait requires Health {
@@ -659,9 +661,12 @@ Directional_Light_Entity :: entity @predicted {
     angular_diameter_degrees: f32 = 0.0     @Editable
 }
 
+// touched_by: which of Touchable's `by` kinds this plate listens to; a toucher it excludes forms no overlap, so
+// it gets neither Touched nor Left.
 Trigger_Volume_Entity :: entity is Switchable, Touchable {
     switch_state:      Enabled
     volume:            Box_Volume = { half_extents = {64, 64, 64} }
+    touched_by:        Toucher_Filter = .Anything @Editable
 }
 
 Jump_Pad_Entity :: entity @predicted is Switchable, Touchable {

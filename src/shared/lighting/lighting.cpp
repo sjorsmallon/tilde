@@ -126,23 +126,14 @@ shadow_projection_t spot_shadow_projection(const scene_light_t &light, uint32_t 
   return projection;
 }
 
-// Half the frame's vertical angle, clamped as the spot's cone is: a perspective map cannot hold a hemisphere.
-static float projector_half_angle(const scene_light_t &light)
+float projector_half_angle(const scene_light_t &light)
 {
   const float cos_outer = std::clamp(light.cos_outer, std::cos(linalg::to_radians(85.f)),
                                      std::cos(linalg::to_radians(1.f)));
   return std::acos(cos_outer);
 }
 
-// The frame's axes: forward, and `up` squared to it (a map's roll is free, but a sheared frame is not one).
-struct projector_axes_t
-{
-  linalg::vec3 forward;
-  linalg::vec3 right;
-  linalg::vec3 up;
-};
-
-static projector_axes_t projector_axes(const scene_light_t &light)
+projector_axes_t projector_axes(const scene_light_t &light)
 {
   const linalg::vec3 forward = linalg::normalize(light.forward);
   linalg::vec3       up      = light.up - forward * linalg::dot(light.up, forward);

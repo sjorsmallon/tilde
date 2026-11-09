@@ -30,6 +30,8 @@
 #include "server/systems/launcher_system.hpp"
 #include "server/systems/timer_system.hpp"
 #include "server/systems/trigger_system.hpp"
+#include "shared/collision/mover_path.hpp"
+#include "shared/map/mesh/mesh.hpp"
 #include "server/server_api.hpp"
 #include "server/server_context.hpp"
 
@@ -232,13 +234,13 @@ void test_the_load_check_refuses_what_cannot_run()
   }
 
   {
-    // NOTHING that can touch is Colorable, so this row could never do anything
+    // NOTHING that can touch is Counting, so this row could never do anything
     // whoever walks in -- which is the one activator case the load check can
     // still settle, and the whole point of declaring `by` at all.
     wired_map_t wired = make_wired_map();
     shared::connection_t row = touched_enables_the_light(wired);
     row.target_kind          = shared::connection_target_t::Activator;
-    row.data.tag             = entities::entity_action::Set_Color;
+    row.data.tag             = entities::entity_action::Reset;
     row.has_override         = true;
     wired.map.connections.push_back(row);
     check(refused(wired.map, 0),
@@ -1139,6 +1141,110 @@ void test_the_toucher_is_the_activator()
         "and the handler wrote the volume the row named");
 }
 
+// A projector at the origin, a wall 300 units down its axis, a plate on the wall
+// where the picture's centre lands, and a ball in the picture.
+struct projected_plate_t
+{
+  shared::map_t        map;
+  shared::entity_uid_t projector = 0;
+  shared::entity_uid_t plate     = 0;
+  shared::entity_uid_t ball      = 0;
+  vec3f                landing;
+};
+
+projected_plate_t make_projected_plate(entities::Toucher_Filter touched_by)
+{
+  projected_plate_t fixture;
+
+  auto projector   = std::make_shared<entities::Projector_Entity>();
+  projector->range = 1000.f;
+  fixture.projector = fixture.map.add_entity(projector);
+
+  const std::optional<shared::scene_light_t> light =
+      shared::try_convert_light_entity_to_scene_light(*projector, shared::get_placed_pose_for_entity(*projector));
+  check(light.has_value(), "a fresh projector converts to a scene light");
+  const vec3f forward = light ? light->forward : vec3f{1.f, 0.f, 0.f};
+  fixture.landing     = forward * 300.f;
+
+  const vec3f absolute{std::abs(forward.x), std::abs(forward.y), std::abs(forward.z)};
+  fixture.map.add_geometry(
+      shared::make_box_mesh(forward * 310.f, vec3f{200.f, 200.f, 200.f} - absolute * 190.f));
+
+  auto plate       = std::make_shared<entities::Trigger_Volume_Entity>();
+  plate->position  = fixture.landing;
+  plate->touched_by = touched_by;
+  fixture.plate    = fixture.map.add_entity(plate);
+
+  auto ball       = std::make_shared<entities::Projected_Ball_Entity>();
+  ball->projector = fixture.projector;
+  ball->uv        = {0.5f, 0.5f, 0.f};
+  fixture.ball    = fixture.map.add_entity(ball);
+
+  return fixture;
+}
+
+void move_ball(server_context_t& context, shared::entity_uid_t uid, float u, float v)
+{
+  context.world.session.entity_system.get<entities::Projected_Ball_Entity>(uid)->uv = {u, v, 0.f};
+}
+
+void test_a_projected_ball_presses_a_plate_where_its_picture_lands()
+{
+  std::printf("connections: a projected ball touches the plate its picture lands on\n");
+
+  projected_plate_t fixture = make_projected_plate(entities::Toucher_Filter::Anything);
+
+  cvars::cvar_state_t cvar_state;
+  server_context_t    context;
+  install(context, cvar_state, fixture.map);
+
+  update_triggers(context);
+  check(context.world.pending_actions.empty(), "a plate with no connections queues nothing");
+  check(context.world.previous_tick_trigger_overlaps.size() == 1, "but the ball's picture overlaps it");
+  check(context.world.previous_tick_trigger_overlaps.begin()->toucher == fixture.ball,
+        "and the ball is the toucher");
+
+  ++context.tick_number;
+  move_ball(context, fixture.ball, 0.5f, 0.05f);
+  update_triggers(context);
+  check(context.world.previous_tick_trigger_overlaps.empty(), "a ball high in the picture lands above the plate");
+
+  ++context.tick_number;
+  move_ball(context, fixture.ball, 0.5f, 0.5f);
+  update_triggers(context);
+  check(context.world.previous_tick_trigger_overlaps.size() == 1, "and back at the centre it is on it again");
+}
+
+void test_a_plate_listens_to_the_touchers_it_names()
+{
+  std::printf("connections: touched_by picks players, balls or both\n");
+
+  {
+    projected_plate_t   fixture = make_projected_plate(entities::Toucher_Filter::Players);
+    cvars::cvar_state_t cvar_state;
+    server_context_t    context;
+    install(context, cvar_state, fixture.map);
+    update_triggers(context);
+    check(context.world.previous_tick_trigger_overlaps.empty(), "a Players plate ignores the ball");
+
+    ++context.tick_number;
+    place_player_in(context, fixture.landing);
+    update_triggers(context);
+    check(context.world.previous_tick_trigger_overlaps.size() == 1, "and takes a player standing on it");
+  }
+  {
+    projected_plate_t   fixture = make_projected_plate(entities::Toucher_Filter::Projected_Balls);
+    cvars::cvar_state_t cvar_state;
+    server_context_t    context;
+    install(context, cvar_state, fixture.map);
+    place_player_in(context, fixture.landing);
+    update_triggers(context);
+    check(context.world.previous_tick_trigger_overlaps.size() == 1 &&
+              context.world.previous_tick_trigger_overlaps.begin()->toucher == fixture.ball,
+          "a Projected_Balls plate takes the ball and ignores the player beside it");
+  }
+}
+
 // --- 5. Died and Health_Changed, out of the damage choke point ---------------
 
 // A crate wired to a lamp, which is step 5's whole point: the second sender,
@@ -1406,6 +1512,8 @@ int main()
   test_a_launchers_speed_flight_and_rest_vary_inside_their_fractions();
   test_a_launcher_with_an_interval_fires_on_its_own_clock();
   test_the_toucher_is_the_activator();
+  test_a_projected_ball_presses_a_plate_where_its_picture_lands();
+  test_a_plate_listens_to_the_touchers_it_names();
   test_a_damageable_emits_died_and_health_changed();
   test_a_switched_light_leaves_the_frame();
   test_the_console_parses_a_parameter_tail();

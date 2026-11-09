@@ -21,17 +21,10 @@ namespace
 void gather_projected_ball_solids(server_context_t& context, const shared::predicted_world_storage_t& world,
                                   const entities::Projector_Entity& projector, const shared::projector_mask_t& mask)
 {
-  shared::game_session_t& session = context.world.session;
   std::vector<shared::projector_mask_rectangle_t>& solids = context.projected_ball_solids;
   solids.assign(mask.rectangles.begin(), mask.rectangles.end());
 
-  const shared::path_pose_t placed = shared::get_placed_pose_for_entity(projector);
-  const entities::Rides*    rides  = entities::get_rides(&projector);
-  const shared::path_pose_t pose =
-      rides != nullptr ? shared::ridden_pose_at(session.entity_system, session.path_links, session.mover_rests,
-                                                placed, *rides, context.tick_number, context.cvars->sv_tickrate)
-                       : placed;
-  const std::optional<shared::scene_light_t> light = shared::try_convert_light_entity_to_scene_light(projector, pose);
+  const std::optional<shared::scene_light_t> light = try_compute_projector_scene_light(context, projector);
   if (!light)
     return;
 
@@ -51,6 +44,19 @@ void gather_projected_ball_solids(server_context_t& context, const shared::predi
 }
 
 } // namespace
+
+std::optional<shared::scene_light_t> try_compute_projector_scene_light(server_context_t&                 context,
+                                                                      const entities::Projector_Entity& projector)
+{
+  shared::game_session_t&   session = context.world.session;
+  const shared::path_pose_t placed  = shared::get_placed_pose_for_entity(projector);
+  const entities::Rides*    rides   = entities::get_rides(&projector);
+  const shared::path_pose_t pose =
+      rides != nullptr ? shared::ridden_pose_at(session.entity_system, session.path_links, session.mover_rests,
+                                                placed, *rides, context.tick_number, context.cvars->sv_tickrate)
+                       : placed;
+  return shared::try_convert_light_entity_to_scene_light(projector, pose);
+}
 
 void update_projected_balls(server_context_t& context, const shared::predicted_world_storage_t& world, float dt)
 {

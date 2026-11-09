@@ -21,6 +21,7 @@ struct Trigger_Volume_Entity : Entity
 
   Enabled switch_state;
   Box_Volume volume;
+  Toucher_Filter touched_by;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

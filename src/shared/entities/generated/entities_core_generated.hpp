@@ -171,6 +171,18 @@ constexpr uint32_t Light_Mode_COUNT = 3;
 const char* to_string(Light_Mode value);
 template <> std::optional<Light_Mode> try_from_string<Light_Mode>(std::string_view text);
 
+enum class Toucher_Filter : uint8_t
+{
+  Anything = 0,
+  Players = 1,
+  Projected_Balls = 2,
+};
+
+constexpr uint32_t Toucher_Filter_COUNT = 3;
+
+const char* to_string(Toucher_Filter value);
+template <> std::optional<Toucher_Filter> try_from_string<Toucher_Filter>(std::string_view text);
+
 enum class Solid_Shadows : uint8_t
 {
   None = 0,
@@ -317,19 +329,20 @@ enum class enum_type : uint16_t
   Damage_Type = 6,
   Hit_Region = 7,
   Light_Mode = 8,
-  Solid_Shadows = 9,
-  Aim_Pose = 10,
-  Round_Phase = 11,
-  Game_Mode = 12,
-  Round_End_Reason = 13,
-  Match_Request = 14,
-  Easing = 15,
-  Reveal_Cone_Kind = 16,
-  Lens_Filter = 17,
-  Movement_Override = 18,
+  Toucher_Filter = 9,
+  Solid_Shadows = 10,
+  Aim_Pose = 11,
+  Round_Phase = 12,
+  Game_Mode = 13,
+  Round_End_Reason = 14,
+  Match_Request = 15,
+  Easing = 16,
+  Reveal_Cone_Kind = 17,
+  Lens_Filter = 18,
+  Movement_Override = 19,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 19;
+constexpr uint32_t ENUM_TYPE_COUNT = 20;
 
 const enum_type_info_t& enum_info(enum_type type);
 
@@ -469,6 +482,12 @@ template <> struct enum_traits<entities::Light_Mode>
 {
   static constexpr uint32_t count = entities::Light_Mode_COUNT;
   static constexpr entities::enum_type type = entities::enum_type::Light_Mode;
+};
+
+template <> struct enum_traits<entities::Toucher_Filter>
+{
+  static constexpr uint32_t count = entities::Toucher_Filter_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Toucher_Filter;
 };
 
 template <> struct enum_traits<entities::Solid_Shadows>

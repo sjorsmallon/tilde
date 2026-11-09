@@ -147,6 +147,18 @@ inline constexpr float SHADOW_NEAR_PLANE = 1.f;
 [[nodiscard]] shadow_projection_t spot_shadow_projection(const scene_light_t &light,
                                                          uint32_t             resolution);
 
+// Half the frame's vertical angle, clamped as the spot's cone is: a perspective map cannot hold a hemisphere.
+[[nodiscard]] float projector_half_angle(const scene_light_t &light);
+
+// The frame's axes: forward, and `up` squared to it (a map's roll is free, but a sheared frame is not one).
+struct projector_axes_t
+{
+  linalg::vec3 forward;
+  linalg::vec3 right;
+  linalg::vec3 up;
+};
+[[nodiscard]] projector_axes_t projector_axes(const scene_light_t &light);
+
 // A projector's frustum IS its frame: twice its half angle as the vertical fov, its aspect, its range as the
 // far plane, its `up` as the map's up. The one matrix per projector: the shadow map's and the picture's uv
 // (direct_light.glsl's projector_mask reads the same layer's matrix), so a projector always takes a layer.

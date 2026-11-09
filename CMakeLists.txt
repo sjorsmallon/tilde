@@ -1401,6 +1401,7 @@ add_game_test(match_announcement_test
 add_game_test(entity_io_test
     SOURCES src/server/entity_io_console.cpp
             src/server/systems/trigger_system.cpp
+            src/server/systems/projected_ball_system.cpp
             src/server/systems/timer_system.cpp
             ${MATCH_SERVER_SOURCES}
     INCLUDES src/server

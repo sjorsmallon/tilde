@@ -233,7 +233,8 @@ Directional_Light_Entity::Directional_Light_Entity()
 
 Trigger_Volume_Entity::Trigger_Volume_Entity()
   : switch_state{},
-    volume({.half_extents = {64.0f, 64.0f, 64.0f}})
+    volume({.half_extents = {64.0f, 64.0f, 64.0f}}),
+    touched_by(Toucher_Filter::Anything)
 {
   type = entity_type::Trigger_Volume_Entity;
 }

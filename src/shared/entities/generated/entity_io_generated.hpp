@@ -358,8 +358,8 @@ inline constexpr uint64_t SIGNAL_ACTIVATOR_MASKS[ENTITY_SIGNAL_COUNT] = {
   0u,   // Color_Changed
   0u,   // Limit_Reached
   0u,   // Fell_Below_Limit
-  entity_type_bit(entity_type::Player_Entity),   // Touched
-  entity_type_bit(entity_type::Player_Entity),   // Left
+  entity_type_bit(entity_type::Player_Entity) | entity_type_bit(entity_type::Projected_Ball_Entity),   // Touched
+  entity_type_bit(entity_type::Player_Entity) | entity_type_bit(entity_type::Projected_Ball_Entity),   // Left
   0u,   // Died
   0u,   // Health_Changed
   0u,   // Elapsed

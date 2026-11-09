@@ -3,8 +3,11 @@
 // pushed out of a rectangle it starts inside, and is carried aside by a rectangle that advances into it. A
 // hitbox's silhouette lands on the picture where the frame's matrix maps it: centred on the axis, above it
 // where world up is, nothing from behind the lens or outside the frame.
+#include "collision/collision_detection.hpp"
 #include "lighting/lighting.hpp"
 #include "lighting/projected_ball.hpp"
+#include "map/map_geometry.hpp"
+#include "map/mesh/mesh.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -163,6 +166,62 @@ static void test_hitbox_silhouette_on_the_picture()
         "outside the frame casts nothing");
 }
 
+static Bounding_Volume_Hierarchy build_world_from_boxes(const std::vector<shared::mesh_geometry_t>& boxes)
+{
+  std::vector<BVH_Input> inputs;
+  for (uint32_t index = 0; index < boxes.size(); ++index)
+  {
+    for (const shared::collision_piece_t& piece : shared::get_collision_pieces(boxes[index], index + 1))
+    {
+      BVH_Input input;
+      input.aabb             = piece.bounds;
+      input.id               = {Collision_Id::Type::Static_Geometry, index};
+      input.collision_planes = piece.planes;
+      input.face_polygons    = piece.face_polygons;
+      inputs.push_back(std::move(input));
+    }
+  }
+  return build_bvh(inputs);
+}
+
+static void test_room_point_is_where_the_picture_lands()
+{
+  printf("the ball is in the room where its picture lands\n");
+  shared::scene_light_t light;
+  light.kind      = shared::light_kind_t::Projector;
+  light.position  = {0.f, 0.f, 0.f};
+  light.forward   = {0.f, 0.f, -1.f};
+  light.up        = {0.f, 1.f, 0.f};
+  light.cos_outer = std::cos(linalg::to_radians(30.f));
+  light.aspect    = 2.f;
+  light.range     = 1000.f;
+
+  const Bounding_Volume_Hierarchy wall =
+      build_world_from_boxes({shared::make_box_mesh({0.f, 0.f, -110.f}, {400.f, 400.f, 10.f})});
+  const float half_height = 100.f * std::tan(linalg::to_radians(30.f));
+
+  const std::optional<shared::projected_ball_room_point_t> centre =
+      shared::try_find_projected_ball_room_point(wall, light, {0.5f, 0.5f}, 0.03f);
+  check(centre.has_value(), "the centre of the picture lands on the wall");
+  check(centre && near(centre->point.x, 0.f, 1e-3f) && near(centre->point.y, 0.f, 1e-3f) &&
+            near(centre->point.z, -100.f, 1e-3f),
+        "on the axis, at the wall's near face");
+  check(centre && near(centre->radius, 0.03f * 2.f * half_height, 1e-3f),
+        "its radius is the disc's share of the frame's height there");
+
+  const std::optional<shared::projected_ball_room_point_t> raised =
+      shared::try_find_projected_ball_room_point(wall, light, {0.5f, 0.25f}, 0.03f);
+  check(raised && near(raised->point.y, 0.5f * half_height, 1e-3f), "v a quarter is half way up the frame");
+
+  const std::optional<shared::projected_ball_room_point_t> right =
+      shared::try_find_projected_ball_room_point(wall, light, {0.75f, 0.5f}, 0.03f);
+  check(right && near(right->point.x, 0.5f * half_height * 2.f, 1e-3f), "u three quarters is half way right, by the aspect");
+
+  light.forward = {0.f, 0.f, 1.f};
+  check(!shared::try_find_projected_ball_room_point(wall, light, {0.5f, 0.5f}, 0.03f).has_value(),
+        "a picture that lands on nothing has no room point");
+}
+
 int main()
 {
   test_falls_onto_a_rectangle_and_sits();
@@ -172,6 +231,7 @@ int main()
   test_pushed_out_of_a_rectangle_it_starts_inside();
   test_carried_by_an_advancing_rectangle();
   test_hitbox_silhouette_on_the_picture();
+  test_room_point_is_where_the_picture_lands();
 
   if (failure_count == 0)
     printf("projected_ball_test: all passed\n");

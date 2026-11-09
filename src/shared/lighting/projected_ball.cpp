@@ -1,6 +1,7 @@
 #include "projected_ball.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <optional>
 
 namespace shared
@@ -150,6 +151,26 @@ std::optional<projector_mask_rectangle_t> try_project_hitbox_to_picture(const li
   if (rectangle.u1 <= 0.f || rectangle.u0 >= 1.f || rectangle.v1 <= 0.f || rectangle.v0 >= 1.f)
     return std::nullopt;
   return rectangle;
+}
+
+std::optional<projected_ball_room_point_t> try_find_projected_ball_room_point(const Bounding_Volume_Hierarchy& bvh,
+                                                                            const scene_light_t&             light,
+                                                                            linalg::vec2f uv, float uv_radius)
+{
+  const projector_axes_t axes            = projector_axes(light);
+  const float            tangent         = std::tan(projector_half_angle(light));
+  const float            aspect          = std::max(light.aspect, 1e-3f);
+  const linalg::vec3f    direction_at_one = axes.forward + axes.right * ((2.f * uv.u - 1.f) * tangent * aspect) +
+                                           axes.up * ((1.f - 2.f * uv.v) * tangent);
+  const linalg::vec3f direction = linalg::normalize(direction_at_one);
+
+  ray_hit_result_t hit{};
+  if (!bvh_intersect_ray(bvh, light.position, direction, hit) || hit.t <= 0.f)
+    return std::nullopt;
+
+  const linalg::vec3f point = light.position + direction * hit.t;
+  const float         depth = linalg::dot(point - light.position, axes.forward);
+  return projected_ball_room_point_t{.point = point, .radius = uv_radius * 2.f * depth * tangent};
 }
 
 } // namespace shared

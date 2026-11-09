@@ -98,6 +98,12 @@ constexpr const char* Light_Mode_VALUE_NAMES[] = {
   "Dynamic",
 };
 
+constexpr const char* Toucher_Filter_VALUE_NAMES[] = {
+  "Anything",
+  "Players",
+  "Projected_Balls",
+};
+
 constexpr const char* Solid_Shadows_VALUE_NAMES[] = {
   "None",
   "Shadow_Volumes_Only",
@@ -183,6 +189,7 @@ constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Damage_Type", {Damage_Type_VALUE_NAMES, 3}},
   {"Hit_Region", {Hit_Region_VALUE_NAMES, 3}},
   {"Light_Mode", {Light_Mode_VALUE_NAMES, 3}},
+  {"Toucher_Filter", {Toucher_Filter_VALUE_NAMES, 3}},
   {"Solid_Shadows", {Solid_Shadows_VALUE_NAMES, 3}},
   {"Aim_Pose", {Aim_Pose_VALUE_NAMES, 5}},
   {"Round_Phase", {Round_Phase_VALUE_NAMES, 6}},
@@ -549,7 +556,7 @@ constexpr field_info_t Light_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[9]},
+   .enum_info = &ENUM_INFOS[10]},
 };
 
 constexpr field_info_t Movement_FIELDS[] = {
@@ -651,7 +658,7 @@ constexpr field_info_t Movement_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[18]},
+   .enum_info = &ENUM_INFOS[19]},
   {.name = "override_target_uid",
    .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Movement, override_target_uid),
@@ -822,7 +829,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[12]},
+   .enum_info = &ENUM_INFOS[13]},
   {.name = "phase",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Match, phase),
@@ -831,7 +838,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[11]},
+   .enum_info = &ENUM_INFOS[12]},
   {.name = "phase_start_tick",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Match, phase_start_tick),
@@ -867,7 +874,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[13]},
+   .enum_info = &ENUM_INFOS[14]},
   {.name = "winning_team",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Match, winning_team),
@@ -903,7 +910,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[14]},
+   .enum_info = &ENUM_INFOS[15]},
 };
 
 constexpr field_info_t Path_Follow_FIELDS[] = {
@@ -2899,6 +2906,15 @@ constexpr field_info_t Trigger_Volume_Entity_FIELDS[] = {
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM},
+  {.name = "touched_by",
+   .type = FIELD_TYPE_ENUM,
+   .offset = (uint32_t)offsetof(Trigger_Volume_Entity, touched_by),
+   .size_in_bytes = (uint32_t)sizeof(Trigger_Volume_Entity::touched_by),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = &ENUM_INFOS[9]},
 };
 
 constexpr field_info_t Jump_Pad_Entity_FIELDS[] = {
@@ -3246,7 +3262,7 @@ constexpr field_info_t Geometry_Owner_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[17]},
+   .enum_info = &ENUM_INFOS[18]},
   {.name = "solid_only_when_lensed",
    .type = FIELD_TYPE_BOOL,
    .offset = (uint32_t)offsetof(Geometry_Owner_Entity, solid_only_when_lensed),
@@ -3471,7 +3487,7 @@ constexpr field_info_t Path_Node_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[15]},
+   .enum_info = &ENUM_INFOS[16]},
 };
 
 constexpr field_info_t Mover_Entity_FIELDS[] = {
@@ -4272,7 +4288,7 @@ constexpr field_info_t Reveal_Light_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[16]},
+   .enum_info = &ENUM_INFOS[17]},
   {.name = "range",
    .type = FIELD_TYPE_F32,
    .offset = (uint32_t)offsetof(Reveal_Light_Entity, range),
@@ -4458,7 +4474,7 @@ constexpr field_info_t Lens_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[17]},
+   .enum_info = &ENUM_INFOS[18]},
   {.name = "render",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Lens_Entity, render),
@@ -4801,7 +4817,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"point_light_entity", "Point Light", {Point_Light_Entity_FIELDS, 8}, (uint32_t)sizeof(Point_Light_Entity), (uint32_t)alignof(Point_Light_Entity), 33282u, false, true, true, construct_Point_Light_Entity, as_base_Point_Light_Entity},
   {"spot_light_entity", "Spot Light", {Spot_Light_Entity_FIELDS, 12}, (uint32_t)sizeof(Spot_Light_Entity), (uint32_t)alignof(Spot_Light_Entity), 33282u, false, true, true, construct_Spot_Light_Entity, as_base_Spot_Light_Entity},
   {"directional_light_entity", "Directional Light", {Directional_Light_Entity_FIELDS, 6}, (uint32_t)sizeof(Directional_Light_Entity), (uint32_t)alignof(Directional_Light_Entity), 512u, false, true, true, construct_Directional_Light_Entity, as_base_Directional_Light_Entity},
-  {"trigger_volume_entity", "Trigger Volume", {Trigger_Volume_Entity_FIELDS, 6}, (uint32_t)sizeof(Trigger_Volume_Entity), (uint32_t)alignof(Trigger_Volume_Entity), 3u, false, true, false, construct_Trigger_Volume_Entity, as_base_Trigger_Volume_Entity},
+  {"trigger_volume_entity", "Trigger Volume", {Trigger_Volume_Entity_FIELDS, 7}, (uint32_t)sizeof(Trigger_Volume_Entity), (uint32_t)alignof(Trigger_Volume_Entity), 3u, false, true, false, construct_Trigger_Volume_Entity, as_base_Trigger_Volume_Entity},
   {"jump_pad_entity", "Jump Pad", {Jump_Pad_Entity_FIELDS, 8}, (uint32_t)sizeof(Jump_Pad_Entity), (uint32_t)alignof(Jump_Pad_Entity), 259u, false, true, true, construct_Jump_Pad_Entity, as_base_Jump_Pad_Entity},
   {"reflection_volume_entity", "Reflection Volume", {Reflection_Volume_Entity_FIELDS, 5}, (uint32_t)sizeof(Reflection_Volume_Entity), (uint32_t)alignof(Reflection_Volume_Entity), 1u, false, false, false, construct_Reflection_Volume_Entity, as_base_Reflection_Volume_Entity},
   {"game_rules_entity", "Game Rules", {Game_Rules_Entity_FIELDS, 5}, (uint32_t)sizeof(Game_Rules_Entity), (uint32_t)alignof(Game_Rules_Entity), 8192u, false, true, false, construct_Game_Rules_Entity, as_base_Game_Rules_Entity},
@@ -5175,6 +5191,26 @@ template <> std::optional<Light_Mode> try_from_string<Light_Mode>(std::string_vi
   if (text == "Baked") return Light_Mode::Baked;
   if (text == "Mixed") return Light_Mode::Mixed;
   if (text == "Dynamic") return Light_Mode::Dynamic;
+  return std::nullopt;
+}
+
+const char* to_string(Toucher_Filter value)
+{
+  switch (value)
+  {
+    case Toucher_Filter::Anything: return "Anything";
+    case Toucher_Filter::Players: return "Players";
+    case Toucher_Filter::Projected_Balls: return "Projected_Balls";
+  }
+  assert(false && "invalid Toucher_Filter");
+  return "";
+}
+
+template <> std::optional<Toucher_Filter> try_from_string<Toucher_Filter>(std::string_view text)
+{
+  if (text == "Anything") return Toucher_Filter::Anything;
+  if (text == "Players") return Toucher_Filter::Players;
+  if (text == "Projected_Balls") return Toucher_Filter::Projected_Balls;
   return std::nullopt;
 }
 
@@ -5566,6 +5602,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0x73b30906u;
+const uint32_t SCHEMA_HASH = 0xaf8cd138u;
 
 } // namespace entities

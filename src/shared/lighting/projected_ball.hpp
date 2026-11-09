@@ -6,6 +6,8 @@
 // nothing moves it), one shape kind (the mask's rectangles, and the players' silhouettes as rectangles).
 
 #include "animation/hitbox_rig.hpp"
+#include "collision/collision_detection.hpp"
+#include "lighting/lighting.hpp"
 #include "lighting/projector_mask.hpp"
 #include "linalg.hpp"
 #include "span.hpp"
@@ -51,5 +53,17 @@ struct projected_ball_settings_t
 // the picture by). Empty when a corner is behind the lens or the rectangle misses the frame.
 [[nodiscard]] std::optional<projector_mask_rectangle_t>
 try_project_hitbox_to_picture(const linalg::mat4f& picture_matrix, const assets::posed_hitbox_t& hitbox);
+
+// Where the ball is in the room (projector_plan.md ss3c): the ray from the lens through its uv against the
+// map's shape, and the disc's radius on the surface it lands on. Empty when the ray leaves the map.
+struct projected_ball_room_point_t
+{
+  linalg::vec3f point;
+  float         radius;
+};
+
+[[nodiscard]] std::optional<projected_ball_room_point_t>
+try_find_projected_ball_room_point(const Bounding_Volume_Hierarchy& bvh, const scene_light_t& light,
+                                   linalg::vec2f uv, float uv_radius);
 
 } // namespace shared
