@@ -25,6 +25,36 @@ constexpr field_info_t SET_COLOR_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t SET_CHARACTER_FIELDS[] = {
+  {.name = "column",
+   .type = FIELD_TYPE_I32,
+   .offset = (uint32_t)offsetof(Set_Character_Data, column),
+   .size_in_bytes = (uint32_t)sizeof(Set_Character_Data::column),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "row",
+   .type = FIELD_TYPE_I32,
+   .offset = (uint32_t)offsetof(Set_Character_Data, row),
+   .size_in_bytes = (uint32_t)sizeof(Set_Character_Data::row),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "character",
+   .type = FIELD_TYPE_I32,
+   .offset = (uint32_t)offsetof(Set_Character_Data, character),
+   .size_in_bytes = (uint32_t)sizeof(Set_Character_Data::character),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr field_info_t ADD_FIELDS[] = {
   {.name = "amount",
    .type = FIELD_TYPE_I32,
@@ -208,7 +238,7 @@ constexpr field_info_t ROUND_ENDED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[14]},
+   .enum_info = &ENUM_INFOS[15]},
 };
 
 constexpr field_info_t NODE_REACHED_FIELDS[] = {
@@ -230,6 +260,7 @@ constexpr Span<const field_info_t> ACTION_PAYLOAD_FIELDS[] = {
   {},   // Play
   {},   // Stop_Playing
   {SET_COLOR_FIELDS, 1},
+  {SET_CHARACTER_FIELDS, 3},
   {ADD_FIELDS, 1},
   {},   // Reset
   {},   // Kill
@@ -284,6 +315,7 @@ const char* to_string(entity_action value)
     case entity_action::Play: return "Play";
     case entity_action::Stop_Playing: return "Stop_Playing";
     case entity_action::Set_Color: return "Set_Color";
+    case entity_action::Set_Character: return "Set_Character";
     case entity_action::Add: return "Add";
     case entity_action::Reset: return "Reset";
     case entity_action::Kill: return "Kill";
@@ -320,6 +352,7 @@ template <> std::optional<entity_action> try_from_string<entity_action>(std::str
   if (text == "Play") return entity_action::Play;
   if (text == "Stop_Playing") return entity_action::Stop_Playing;
   if (text == "Set_Color") return entity_action::Set_Color;
+  if (text == "Set_Character") return entity_action::Set_Character;
   if (text == "Add") return entity_action::Add;
   if (text == "Reset") return entity_action::Reset;
   if (text == "Kill") return entity_action::Kill;
@@ -393,6 +426,7 @@ const char* to_string(entity_trait value)
     case entity_trait::Switchable: return "Switchable";
     case entity_trait::Playable: return "Playable";
     case entity_trait::Colorable: return "Colorable";
+    case entity_trait::Typeable: return "Typeable";
     case entity_trait::Counting: return "Counting";
     case entity_trait::Touchable: return "Touchable";
     case entity_trait::Mortal: return "Mortal";
@@ -413,6 +447,7 @@ template <> std::optional<entity_trait> try_from_string<entity_trait>(std::strin
   if (text == "Switchable") return entity_trait::Switchable;
   if (text == "Playable") return entity_trait::Playable;
   if (text == "Colorable") return entity_trait::Colorable;
+  if (text == "Typeable") return entity_trait::Typeable;
   if (text == "Counting") return entity_trait::Counting;
   if (text == "Touchable") return entity_trait::Touchable;
   if (text == "Mortal") return entity_trait::Mortal;
@@ -449,6 +484,7 @@ uint32_t action_payload_size(entity_action action)
     case entity_action::Play: return (uint32_t)sizeof(Play_Data);
     case entity_action::Stop_Playing: return (uint32_t)sizeof(Stop_Playing_Data);
     case entity_action::Set_Color: return (uint32_t)sizeof(Set_Color_Data);
+    case entity_action::Set_Character: return (uint32_t)sizeof(Set_Character_Data);
     case entity_action::Add: return (uint32_t)sizeof(Add_Data);
     case entity_action::Reset: return (uint32_t)sizeof(Reset_Data);
     case entity_action::Kill: return (uint32_t)sizeof(Kill_Data);
@@ -543,6 +579,14 @@ action_data_t erase(const Set_Color_Data& payload)
   action_data_t data;
   data.tag = entity_action::Set_Color;
   data.set_color = payload;
+  return data;
+}
+
+action_data_t erase(const Set_Character_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Set_Character;
+  data.set_character = payload;
   return data;
 }
 

@@ -16,46 +16,74 @@ struct overlap_t
   float         depth;
 };
 
-// The least push that takes the disc out of the rectangle; a centre inside it leaves by the nearest edge.
-[[nodiscard]] std::optional<overlap_t> try_find_overlap(const projector_mask_rectangle_t& rectangle,
-                                                        const linalg::vec2f& centre, float radius)
+float cross(const linalg::vec2f& a, const linalg::vec2f& b)
 {
-  const linalg::vec2f closest{std::clamp(centre.u, rectangle.u0, rectangle.u1),
-                              std::clamp(centre.v, rectangle.v0, rectangle.v1)};
-  const linalg::vec2f away     = centre - closest;
-  const float         distance = linalg::length(away);
-  if (distance >= radius)
-    return std::nullopt;
-  if (distance > 0.f)
-    return overlap_t{away * (1.f / distance), radius - distance};
-
-  float         least  = centre.u - rectangle.u0;
-  linalg::vec2f normal = {-1.f, 0.f};
-  if (rectangle.u1 - centre.u < least)
-  {
-    least  = rectangle.u1 - centre.u;
-    normal = {1.f, 0.f};
-  }
-  if (centre.v - rectangle.v0 < least)
-  {
-    least  = centre.v - rectangle.v0;
-    normal = {0.f, -1.f};
-  }
-  if (rectangle.v1 - centre.v < least)
-  {
-    least  = rectangle.v1 - centre.v;
-    normal = {0.f, 1.f};
-  }
-  return overlap_t{normal, least + radius};
+  return a.u * b.v - a.v * b.u;
 }
 
-[[nodiscard]] std::optional<overlap_t> try_find_deepest_overlap(Span<const projector_mask_rectangle_t> solids,
+// The least push that takes the disc out of the quad; a centre inside it leaves by the nearest edge. The
+// quad's winding is read from its area, so either order round the corners works; a repeated corner is skipped.
+[[nodiscard]] std::optional<overlap_t> try_find_overlap(const projector_mask_quad_t& quad, const linalg::vec2f& centre,
+                                                        float radius)
+{
+  float twice_area = 0.f;
+  for (uint32_t index = 0; index < 4; ++index)
+    twice_area += cross(quad.corners[index], quad.corners[(index + 1) % 4]);
+  if (std::fabs(twice_area) < 1e-12f)
+    return std::nullopt;
+  const float winding = twice_area > 0.f ? 1.f : -1.f;
+
+  bool          inside          = true;
+  float         least_inside    = 1e9f;
+  linalg::vec2f inside_normal   = {0.f, -1.f};
+  float         closest         = 1e9f;
+  linalg::vec2f closest_point   = centre;
+  linalg::vec2f closest_outward = {0.f, -1.f};
+  for (uint32_t index = 0; index < 4; ++index)
+  {
+    const linalg::vec2f a      = quad.corners[index];
+    const linalg::vec2f edge   = quad.corners[(index + 1) % 4] - a;
+    const float         length_squared = linalg::dot(edge, edge);
+    if (length_squared < 1e-12f)
+      continue;
+    const float         length  = std::sqrt(length_squared);
+    const linalg::vec2f outward = linalg::vec2f{edge.v, -edge.u} * (winding / length);
+    const float         side    = cross(edge, centre - a) * winding;
+    if (side < 0.f)
+      inside = false;
+    else if (side / length < least_inside)
+    {
+      least_inside  = side / length;
+      inside_normal = outward;
+    }
+
+    const float         along = std::clamp(linalg::dot(centre - a, edge) / length_squared, 0.f, 1.f);
+    const linalg::vec2f point = a + edge * along;
+    const float         away  = linalg::length(centre - point);
+    if (away < closest)
+    {
+      closest         = away;
+      closest_point   = point;
+      closest_outward = outward;
+    }
+  }
+
+  if (inside)
+    return overlap_t{inside_normal, least_inside + radius};
+  if (closest >= radius)
+    return std::nullopt;
+  if (closest > 0.f)
+    return overlap_t{(centre - closest_point) * (1.f / closest), radius - closest};
+  return overlap_t{closest_outward, radius};
+}
+
+[[nodiscard]] std::optional<overlap_t> try_find_deepest_overlap(Span<const projector_mask_quad_t> solids,
                                                                 const linalg::vec2f& centre, float radius)
 {
   std::optional<overlap_t> deepest;
-  for (const projector_mask_rectangle_t& rectangle : solids)
+  for (const projector_mask_quad_t& quad : solids)
   {
-    const std::optional<overlap_t> overlap = try_find_overlap(rectangle, centre, radius);
+    const std::optional<overlap_t> overlap = try_find_overlap(quad, centre, radius);
     if (overlap && (!deepest || overlap->depth > deepest->depth))
       deepest = overlap;
   }
@@ -64,7 +92,7 @@ struct overlap_t
 
 } // namespace
 
-projected_ball_t projected_ball_step(Span<const projector_mask_rectangle_t> solids, const projected_ball_t& ball,
+projected_ball_t projected_ball_step(Span<const projector_mask_quad_t> solids, const projected_ball_t& ball,
                                      const projected_ball_settings_t& settings, float dt)
 {
   if (dt <= 0.f)
@@ -102,8 +130,8 @@ bool projected_ball_is_outside_frame(const projected_ball_t& ball)
   return ball.uv.u <= 0.f || ball.uv.u >= 1.f || ball.uv.v <= 0.f || ball.uv.v >= 1.f;
 }
 
-std::optional<projector_mask_rectangle_t> try_project_hitbox_to_picture(const linalg::mat4f&          picture_matrix,
-                                                                        const assets::posed_hitbox_t& hitbox)
+std::optional<projector_mask_quad_t> try_project_hitbox_to_picture(const linalg::mat4f&          picture_matrix,
+                                                                   const assets::posed_hitbox_t& hitbox)
 {
   linalg::vec3f minimum;
   linalg::vec3f maximum;
@@ -133,7 +161,7 @@ std::optional<projector_mask_rectangle_t> try_project_hitbox_to_picture(const li
               radius;
   }
 
-  projector_mask_rectangle_t rectangle{1e9f, 1e9f, -1e9f, -1e9f};
+  float u0 = 1e9f, v0 = 1e9f, u1 = -1e9f, v1 = -1e9f;
   for (int corner = 0; corner < 8; ++corner)
   {
     const linalg::vec3f point{(corner & 1) ? maximum.x : minimum.x, (corner & 2) ? maximum.y : minimum.y,
@@ -143,14 +171,14 @@ std::optional<projector_mask_rectangle_t> try_project_hitbox_to_picture(const li
       return std::nullopt;
     const float u = (clip.x / clip.w) * 0.5f + 0.5f;
     const float v = (clip.y / clip.w) * 0.5f + 0.5f;
-    rectangle.u0  = std::min(rectangle.u0, u);
-    rectangle.v0  = std::min(rectangle.v0, v);
-    rectangle.u1  = std::max(rectangle.u1, u);
-    rectangle.v1  = std::max(rectangle.v1, v);
+    u0            = std::min(u0, u);
+    v0            = std::min(v0, v);
+    u1            = std::max(u1, u);
+    v1            = std::max(v1, v);
   }
-  if (rectangle.u1 <= 0.f || rectangle.u0 >= 1.f || rectangle.v1 <= 0.f || rectangle.v0 >= 1.f)
+  if (u1 <= 0.f || u0 >= 1.f || v1 <= 0.f || v0 >= 1.f)
     return std::nullopt;
-  return rectangle;
+  return make_projector_mask_quad(u0, v0, u1, v1);
 }
 
 std::optional<projected_ball_room_point_t> try_find_projected_ball_room_point(const Bounding_Volume_Hierarchy& bvh,

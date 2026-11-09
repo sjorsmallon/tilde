@@ -75,9 +75,9 @@ struct game_session_t
   // reuses it (solid_beams.hpp).
   solid_beam_cache_t solid_beam_cache;
 
-  // Each solid shadow volume's last piece with the planes it was built from, so a crate under a fixed lamp is
-  // made solid once (solid_shadows.hpp).
-  solid_shadow_cache_t solid_shadow_cache;
+  // Each shadow light's still half: the volumes the map and its picture throw, with their solid pieces, held while
+  // the light, the switches and the picture are what they were built from (shadow_volume.hpp).
+  shadow_memo_t shadow_memo;
 
   // The dark of each projector picture as rectangles, computed from the texture on the first tick that asks
   // (projector_mask.hpp).

@@ -334,7 +334,7 @@ enum class stand_in_shape_t
 };
 
 // A point type's pick box. Small enough that a lamp does not swallow the wall
-// behind it, big enough to click; its screen-space icon is the visible thing.
+// behind it, big enough to click; its image-space icon is the visible thing.
 constexpr float POINT_PICK_HALF_EXTENT = 16.f;
 
 struct editor_data_per_entity_type_t
@@ -512,6 +512,13 @@ void projected_ball_diagram(const entities::Entity*, draw_lists_t& draws, const 
   draws.debug.wire_sphere(position, POINT_PICK_HALF_EXTENT, color);
 }
 
+// A projected image is wherever its projector points; the sphere is only where it was placed, so it can be picked.
+void projected_image_diagram(const entities::Entity*, draw_lists_t& draws, const linalg::vec3& position,
+                              color_t color, const entity_draw_settings_t&)
+{
+  draws.debug.wire_sphere(position, POINT_PICK_HALF_EXTENT, color);
+}
+
 // ---- the table ----------------------------------------------------------
 //
 // A row carries only what is constant for the TYPE. Anything read off the
@@ -617,6 +624,7 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
      .draw_reach   = &projector_reach},
 
     {.type = entity_type::Projected_Ball_Entity, .color = colors::yellow, .draw_diagram = &projected_ball_diagram},
+    {.type = entity_type::Projected_Image_Entity, .color = colors::yellow, .draw_diagram = &projected_image_diagram},
 }};
 
 static_assert(rows_in_enum_order<&editor_data_per_entity_type_t::type>(EDITOR_DATA_PER_ENTITY_TYPE),

@@ -5,6 +5,7 @@
 #include "../shared/animation/player_animator.hpp"
 #include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/lighting/lens.hpp"
+#include "../shared/camera_swap.hpp"
 #include "../shared/merge.hpp"
 #include "movement/player_constants.hpp"
 #include "movement/player_move.hpp"
@@ -28,6 +29,7 @@
 
 #include <cmath>
 #include <format>
+#include <optional>
 
 namespace server
 {
@@ -180,6 +182,19 @@ static void fire_move_event_effects(server_context_t& context, const entities::P
   }
 }
 
+// The view a steered body's steps run under: its hand's mouse, as that client last sent it. A hand without
+// a slot steers nothing and the body follows its own input.
+static std::optional<shared::View> try_find_steering_view_for_player(server_context_t& context,
+                                                                     const entities::Player_Entity& player)
+{
+  if (!shared::player_view_is_steered_by_another(player))
+    return std::nullopt;
+  for (connected_client_t row : connected_clients(context))
+    if (row.client.player_uid == player.view_steered_by_uid)
+      return row.client.latest_view;
+  return std::nullopt;
+}
+
 void update_player_inputs(server_context_t& context, const shared::predicted_world_storage_t& world_storage)
 {
   const float tick_dt         = get_tick_interval_seconds();
@@ -210,6 +225,8 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
 
     const uint64_t buttons_before_tick = client.latest_buttons_bitmap;
     client.latest_buttons_bitmap       = shared::buttons_at_end_of_tick(tick_input);
+    client.latest_view                 = tick_input.view_at_end;
+    const std::optional<shared::View> steering_view = try_find_steering_view_for_player(context, player);
 
     const shared::lens_watch_screen_t screen = shared::clamp_lens_watch_screen(
         {.fov_degrees = input.view_fov_degrees, .aspect = input.view_aspect});
@@ -234,8 +251,11 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
     Move_Events move_events{};
     uint64_t    buttons_entering_step = buttons_before_tick;
 
-    for (const shared::subtick_step_t& step : steps)
+    for (const shared::subtick_step_t& input_step : steps)
     {
+      shared::subtick_step_t step = input_step;
+      if (steering_view)
+        step.view = step.view_at_end = *steering_view;
       const uint64_t               pressed_in_this_step = step.buttons & ~buttons_entering_step;
       const shared::subtick_time_t step_time = shared::subtick_time(context.tick_number, step.start_slot);
       const vec3f                  aim       = linalg::direction_from_angles(step.view.yaw, step.view.pitch);
@@ -290,8 +310,9 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
 
     if (!is_dead && !world_is_frozen)
     {
-      player.view_angle_yaw   = tick_input.view_at_end.yaw;
-      player.view_angle_pitch = tick_input.view_at_end.pitch;
+      const shared::View head = steering_view.value_or(tick_input.view_at_end);
+      player.view_angle_yaw   = head.yaw;
+      player.view_angle_pitch = head.pitch;
     }
 
     fire_move_event_effects(context, player, world, move_events);

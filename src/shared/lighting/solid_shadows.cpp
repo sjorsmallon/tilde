@@ -7,42 +7,12 @@
 #include "entity_system.hpp"
 #include "geometry/convex_decomposition.hpp"
 #include "geometry/convex_hull.hpp"
+#include "log.hpp"
 
 #include <algorithm>
 
 namespace shared
 {
-
-namespace
-{
-
-bool same_plane(const Plane& a, const Plane& b)
-{
-  return a.point.x == b.point.x && a.point.y == b.point.y && a.point.z == b.point.z && a.normal.x == b.normal.x &&
-         a.normal.y == b.normal.y && a.normal.z == b.normal.z;
-}
-
-// Everything try_build_solid_shadow_piece reads: the two plane lists and the caster's bounds the reach box is around.
-bool built_from_same_planes(const shadow_volume_t& built_from, const shadow_volume_t& volume)
-{
-  if (built_from.side_plane_count != volume.side_plane_count ||
-      built_from.light_facing_plane_count != volume.light_facing_plane_count ||
-      built_from.solid_shadows != volume.solid_shadows ||
-      !same_plane({built_from.light_apex, built_from.light_direction}, {volume.light_apex, volume.light_direction}))
-    return false;
-  if (!same_plane({built_from.caster_bounds.min, built_from.caster_bounds.max},
-                  {volume.caster_bounds.min, volume.caster_bounds.max}))
-    return false;
-  for (uint32_t side = 0; side < volume.side_plane_count; ++side)
-    if (!same_plane(built_from.side_planes[side], volume.side_planes[side]))
-      return false;
-  for (uint32_t front = 0; front < volume.light_facing_plane_count; ++front)
-    if (!same_plane(built_from.light_facing_planes[front], volume.light_facing_planes[front]))
-      return false;
-  return true;
-}
-
-} // namespace
 
 std::optional<collision_piece_t> try_build_solid_shadow_piece(const shadow_volume_t& volume)
 {
@@ -82,43 +52,44 @@ std::optional<collision_piece_t> try_build_solid_shadow_piece(const shadow_volum
                            .face_polygons = compute_polyhedron_face_polygons(*body)};
 }
 
-std::optional<collision_piece_t> try_get_solid_shadow_piece_for_volume(solid_shadow_cache_t& cache,
-                                                                      const shadow_volume_t& volume)
+namespace
 {
-  solid_shadow_cache_entry_t* entry = nullptr;
-  for (solid_shadow_cache_entry_t& candidate : cache.entries)
-    if (candidate.light == volume.light && candidate.caster_piece == volume.caster_piece)
-      entry = &candidate;
 
-  if (entry != nullptr && built_from_same_planes(entry->built_from, volume))
+std::optional<collision_piece_t> solid_shadow_piece_for_volume(const shadow_memo_t& memo, const shadow_volume_t& volume)
+{
+  if (volume.static_index == SHADOW_VOLUME_NOT_STATIC)
   {
-    entry->last_used = cache.cut;
-    return entry->piece;
+    for (const shadow_moving_memo_t& entry : memo.moving)
+      if (entry.light == volume.light && entry.owner == volume.caster && entry.piece_index == volume.caster_piece_index)
+        return entry.solid_piece;
+    fatal_error("[solid shadows] caster {} piece {} under light {} has no moving memo: the volumes are not this memo's "
+                "computation",
+                volume.caster, volume.caster_piece_index, volume.light);
   }
-
-  if (entry == nullptr)
-  {
-    cache.entries.push_back({.light = volume.light, .caster_piece = volume.caster_piece});
-    entry = &cache.entries.back();
-  }
-  entry->last_used  = cache.cut;
-  entry->built_from = volume;
-  entry->piece      = try_build_solid_shadow_piece(volume);
-  ++cache.builds;
-  return entry->piece;
+  for (const shadow_light_memo_t& entry : memo.lights)
+    if (entry.light == volume.light)
+    {
+      if (volume.static_index >= entry.solid_pieces.size())
+        fatal_error("[solid shadows] light {} memo holds {} solid pieces, volume asks for {}: the volumes are not this "
+                    "memo's cut",
+                    volume.light, entry.solid_pieces.size(), volume.static_index);
+      return entry.solid_pieces[volume.static_index];
+    }
+  fatal_error("[solid shadows] light {} has no memo: the volumes are not this memo's cut", volume.light);
 }
 
+} // namespace
+
 void compute_solid_shadows(const Entity_System& system, Span<const shadow_volume_t> shadow_volumes,
-                           solid_shadow_cache_t& cache, std::vector<mover_t>& out)
+                           const shadow_memo_t& memo, std::vector<mover_t>& out)
 {
-  ++cache.cut;
   const size_t first_appended = out.size();
   for (const shadow_volume_t& volume : shadow_volumes)
   {
     const entities::Light* light = entities::get_component<entities::Light>(system.try_find(volume.light));
     if (light == nullptr || light->solid_shadows == entities::Solid_Shadows::None)
       continue;
-    std::optional<collision_piece_t> piece = try_get_solid_shadow_piece_for_volume(cache, volume);
+    std::optional<collision_piece_t> piece = solid_shadow_piece_for_volume(memo, volume);
     if (!piece)
       continue;
 
@@ -142,9 +113,6 @@ void compute_solid_shadows(const Entity_System& system, Span<const shadow_volume
     mover->swept_bounds = union_aabb(mover->swept_bounds, piece->bounds);
     mover->pieces.push_back(std::move(*piece));
   }
-
-  std::erase_if(cache.entries, [&](const solid_shadow_cache_entry_t& entry)
-                { return entry.last_used + SOLID_SHADOW_CACHE_KEEP_CUTS < cache.cut; });
 }
 
 } // namespace shared

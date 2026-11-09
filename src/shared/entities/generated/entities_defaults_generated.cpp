@@ -28,6 +28,7 @@ Player_Entity::Player_Entity()
     body_yaw{},
     view_fov_degrees(90.0f),
     view_aspect(1.7777778f),
+    view_steered_by_uid{},
     health({.current_health = 100, .max_health = 100}),
     death_tick{},
     last_fire_tick{},
@@ -432,8 +433,7 @@ Projector_Entity::Projector_Entity()
     rides{},
     range(512.0f),
     half_angle_degrees(20.0f),
-    aspect(1.7778f),
-    texture(assets::texture_asset::Missing)
+    aspect(1.7778f)
 {
   type = entity_type::Projector_Entity;
 }
@@ -449,6 +449,14 @@ Projected_Ball_Entity::Projected_Ball_Entity()
     respawn_count{}
 {
   type = entity_type::Projected_Ball_Entity;
+}
+
+Projected_Image_Entity::Projected_Image_Entity()
+  : projector{},
+    texture(assets::texture_asset::Missing),
+    text{}
+{
+  type = entity_type::Projected_Image_Entity;
 }
 
 } // namespace entities

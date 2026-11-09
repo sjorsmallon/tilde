@@ -224,6 +224,7 @@ set(ENTITY_IO_HANDLERS
     src/server/entities/point_light_entity.cpp
     src/server/entities/projector_entity.cpp
     src/server/entities/projected_ball_entity.cpp
+    src/server/entities/projected_image_entity.cpp
     src/server/entities/spot_light_entity.cpp
     src/server/entities/player_entity.cpp
     src/server/entities/game_rules_entity.cpp
@@ -591,6 +592,10 @@ add_library(game_shared STATIC
     src/shared/lighting/support_planks.cpp
     src/shared/lighting/projector_mask.cpp
     src/shared/lighting/projected_ball.cpp
+    src/shared/lighting/projected_image.cpp
+    src/shared/lighting/glyph_solids.cpp
+    src/shared/text_raster.hpp
+    src/shared/text_raster.cpp
     src/shared/subtick.hpp
     src/shared/subtick.cpp
     # Both channels' tables and fire helpers. Neither references a handler, so
@@ -1386,6 +1391,20 @@ set(MATCH_SERVER_SOURCES
     src/server/entity_lifecycle.cpp)
 add_game_test(game_rules_test
     SOURCES ${MATCH_SERVER_SOURCES}
+    INCLUDES src/server
+    DEFINITIONS GAME_SERVER_EXPORTS)
+
+# The Camera Swapper: a steered body's steps run under its hand's mouse (shared/camera_swap.hpp).
+# Drives update_player_inputs and update_contacts, so it compiles the input and contact systems too.
+add_game_test(camera_swap_test
+    SOURCES ${MATCH_SERVER_SOURCES}
+            src/server/systems/player_input_system.cpp
+            src/server/systems/contact_system.cpp
+            src/server/systems/ping_system.cpp
+            src/server/systems/bubble_system.cpp
+            src/server/systems/canopy_system.cpp
+            src/server/systems/fixed_arc_flight_launch.cpp
+            src/server/weapon_fire.cpp
     INCLUDES src/server
     DEFINITIONS GAME_SERVER_EXPORTS)
 

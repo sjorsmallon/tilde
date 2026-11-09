@@ -66,7 +66,6 @@ std::optional<scene_light_t> try_convert_light_entity_to_scene_light(const entit
     light.cos_inner     = std::cos(linalg::to_radians(projector->half_angle_degrees));
     light.cos_outer     = light.cos_inner;
     light.aspect        = std::max(projector->aspect, 1e-3f);
-    light.picture       = projector->texture;
     light.source_radius = std::max(projector->light.source_radius, 0.f);
     light.casts_shadows = projector->light.casts_shadows;
     light.solid_shadows = projector->light.solid_shadows != entities::Solid_Shadows::None;
@@ -448,7 +447,8 @@ void begin_frame_lights(frame_lights_t &frame, const lightmap_t &lightmap)
 }
 
 void add_frame_light(frame_lights_t &frame, const lightmap_t &lightmap,
-                     entity_uid_t uid, const entities::Entity &entity, const path_pose_t &pose)
+                     entity_uid_t uid, const entities::Entity &entity, const path_pose_t &pose,
+                     const entities::Projected_Image_Entity *image)
 {
   const std::optional<scene_light_t> gathered = try_convert_light_entity_to_scene_light(entity, pose);
   if (!gathered) return;
@@ -456,6 +456,7 @@ void add_frame_light(frame_lights_t &frame, const lightmap_t &lightmap,
 
   scene_light_t light = *gathered;
   light.uid           = uid;
+  light.image         = image;
 
   // The resolve the bake's uid table exists for, and the one place it happens:
   // an entity is what the frame has and a slot is what the shader needs.

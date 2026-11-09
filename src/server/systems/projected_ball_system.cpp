@@ -4,9 +4,11 @@
 #include "../../shared/collision/movers.hpp"
 #include "../../shared/lighting/lighting.hpp"
 #include "../../shared/lighting/projected_ball.hpp"
+#include "../../shared/lighting/projected_image.hpp"
 #include "../../shared/lighting/projector_mask.hpp"
 #include "../../shared/lighting/shadow_volume.hpp"
 #include "entities/generated/entities/projected_ball_entity_generated.hpp"
+#include "entities/generated/entities/projected_image_entity_generated.hpp"
 #include "entities/generated/entities/projector_entity_generated.hpp"
 
 namespace server
@@ -15,14 +17,15 @@ namespace server
 namespace
 {
 
-// The mask's rectangles, the footprint of the things in this projector's light, then every posed target's hitboxes
-// as the silhouettes they throw on its picture (pose_all_targets ran this tick, so the volumes are the ones a shot
-// would hit).
+// The picture's dark (its image's mask quads, none without an image), the footprint of the things in this
+// projector's light, then every posed target's hitboxes as the silhouettes they throw on its picture
+// (pose_all_targets ran this tick, so the volumes are the ones a shot would hit).
 void gather_projected_ball_solids(server_context_t& context, const shared::predicted_world_storage_t& world,
-                                  const entities::Projector_Entity& projector, const shared::projector_mask_t& mask)
+                                  const entities::Projector_Entity&          projector,
+                                  Span<const shared::projector_mask_quad_t> picture_dark)
 {
-  std::vector<shared::projector_mask_rectangle_t>& solids = context.projected_ball_solids;
-  solids.assign(mask.rectangles.begin(), mask.rectangles.end());
+  std::vector<shared::projector_mask_quad_t>& solids = context.projected_ball_solids;
+  solids.assign(picture_dark.begin(), picture_dark.end());
 
   const std::optional<shared::scene_light_t> light = try_compute_projector_scene_light(context, projector);
   if (!light)
@@ -38,7 +41,7 @@ void gather_projected_ball_solids(server_context_t& context, const shared::predi
 
   for (const shared::hitscan_target_t& target : context.posed_players.targets)
     for (const assets::posed_hitbox_t& hitbox : target.hitboxes)
-      if (const std::optional<shared::projector_mask_rectangle_t> silhouette =
+      if (const std::optional<shared::projector_mask_quad_t> silhouette =
               shared::try_project_hitbox_to_picture(picture_matrix, hitbox))
         solids.push_back(*silhouette);
 }
@@ -78,14 +81,21 @@ void update_projected_balls(server_context_t& context, const shared::predicted_w
     }
     else
     {
-      const shared::projector_mask_t& mask =
-          shared::find_or_compute_projector_mask(session.projector_mask_cache, projector->texture);
-      gather_projected_ball_solids(context, world, *projector, mask);
+      const entities::Projected_Image_Entity* image =
+          shared::find_projected_image_for_projector(session.entity_system, projector->entity_id);
+      const Span<const shared::projector_mask_quad_t> picture_dark =
+          image != nullptr
+              ? Span<const shared::projector_mask_quad_t>(
+                    shared::find_or_compute_projector_mask_for_image(session.projector_mask_cache, *image,
+                                                                     projector->aspect)
+                        .quads)
+              : Span<const shared::projector_mask_quad_t>();
+      gather_projected_ball_solids(context, world, *projector, picture_dark);
       const shared::projected_ball_settings_t settings{.radius      = ball.radius,
                                                        .gravity     = context.cvars->mp_projected_gravity,
                                                        .restitution = context.cvars->mp_projected_restitution,
                                                        .friction    = context.cvars->mp_projected_friction};
-      state = shared::projected_ball_step(Span<const shared::projector_mask_rectangle_t>(context.projected_ball_solids),
+      state = shared::projected_ball_step(Span<const shared::projector_mask_quad_t>(context.projected_ball_solids),
                                           state, settings, dt);
     }
 

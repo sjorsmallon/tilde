@@ -26,6 +26,7 @@ struct Player_Entity : Entity
   float body_yaw;
   float view_fov_degrees;
   float view_aspect;
+  shared::entity_uid_t view_steered_by_uid;
   Health health;
   uint32_t death_tick;
   uint32_t last_fire_tick;

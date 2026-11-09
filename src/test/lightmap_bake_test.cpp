@@ -1543,7 +1543,7 @@ shared::frame_lights_t gather_for(const shared::map_t &map,
   for (const shared::map_entity_t &entry : map.entities)
     if (entry.entity)
       shared::add_frame_light(frame, lightmap, entry.uid, *entry.entity,
-                              shared::get_placed_pose_for_entity(*entry.entity));
+                              shared::get_placed_pose_for_entity(*entry.entity), nullptr);
   return frame;
 }
 

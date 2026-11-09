@@ -30,6 +30,7 @@
 #include "../../shared/weapons.hpp"
 #include "../../shared/assets/asset.hpp"
 #include "../../shared/collision/debug_collision.hpp"
+#include "../../shared/lighting/projected_image.hpp"
 #include "../../shared/timed_function.hpp"
 #include <algorithm>
 #include <cmath>
@@ -572,7 +573,8 @@ void Play_State::draw_lights_and_beams(client_context_t &ctx, const draw_inputs_
   {
     (void)light;
     const shared::path_pose_t light_pose = drawn_ridden_pose(ctx, entity);
-    shared::add_frame_light(scene.lights, ctx.world.session.lightmap, entity.entity_id, entity, light_pose);
+    shared::add_frame_light(scene.lights, ctx.world.session.lightmap, entity.entity_id, entity, light_pose,
+                            shared::find_projected_image_for_projector(entity_system, entity.entity_id));
     if (ctx.cvars->r_beam)
       if (const entities::Spot_Light_Entity* spot = entities::entity_as<entities::Spot_Light_Entity>(&entity);
           spot != nullptr && spot->beam && shared::light_is_switched_on(entity))
@@ -730,7 +732,8 @@ void Play_State::draw_remote_players(client_context_t &ctx, const draw_inputs_t 
       my_player != nullptr && my_player->health.current_health > 0 && my_player->render.visible)
   {
     const aim_settings_t aim = aim_settings_from_cvars(*ctx.cvars);
-    advance_body_yaw(ctx.visuals.own_body_yaw, ctx.prediction.player_yaw, frame.world_delta_seconds, aim);
+    const shared::View head = drawn_local_head(ctx);
+    advance_body_yaw(ctx.visuals.own_body_yaw, head.yaw, frame.world_delta_seconds, aim);
 
     const entities::Render&                            render     = my_player->render;
     const assets::asset_handle_t<assets::mesh_asset_t> mesh_asset = assets::get_mesh(render.mesh);
@@ -743,8 +746,8 @@ void Play_State::draw_remote_players(client_context_t &ctx, const draw_inputs_t 
         pose_storage.emplace_back();
       assets::posed_skeleton_t& posed = pose_storage[pose_count++];
       posed.clear();
-      compute_aim_posed_skeleton(holding_gun_aim_poses(), *skeleton, ctx.prediction.player_pitch,
-                                 linalg::wrap_degrees(ctx.prediction.player_yaw - ctx.visuals.own_body_yaw), aim, posed);
+      compute_aim_posed_skeleton(holding_gun_aim_poses(), *skeleton, head.pitch,
+                                 linalg::wrap_degrees(head.yaw - ctx.visuals.own_body_yaw), aim, posed);
 
       renderer::mesh_draw_t draw{};
       draw.mesh      = mesh;

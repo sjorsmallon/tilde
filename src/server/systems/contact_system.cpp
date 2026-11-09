@@ -9,6 +9,7 @@
 #include "collision/bounce_body.hpp"
 #include "../shared/network/generated/messages_generated.hpp"
 #include "../shared/log.hpp"
+#include "../shared/camera_swap.hpp"
 #include "../shared/merge.hpp"
 #include "movement/movement_kernel.hpp"
 #include "movement/movement_override.hpp"
@@ -444,6 +445,55 @@ static void apply_merge(server_context_t& context, const pending_contact_t& cont
   passenger->velocity = driver->velocity;
 }
 
+// Each body's view goes to the other's hand (shared/camera_swap.hpp). A shooter already in a swap ends
+// theirs with the shot, whoever it hit; a target already in one is left in it.
+static void release_camera_swap(shared::Entity_System& entity_system, entities::Player_Entity& player)
+{
+  const entities::Player_Entity* steered =
+      shared::try_find_player_steered_by_hand_uid(entity_system, player.entity_id);
+  if (steered != nullptr)
+    entity_system.get<entities::Player_Entity>(steered->entity_id)->view_steered_by_uid = shared::null_entity_uid;
+  player.view_steered_by_uid = shared::null_entity_uid;
+}
+
+static void apply_camera_swap(server_context_t& context, const pending_contact_t& contact)
+{
+  shared::Entity_System& entity_system = context.world.session.entity_system;
+
+  entities::Player_Entity* shooter = entity_system.get<entities::Player_Entity>(contact.shooter_uid);
+  if (shooter == nullptr)
+  {
+    log_error("Camera swap from uid {} onto uid {} dropped: the shooter is no longer a player",
+              contact.shooter_uid, contact.target_uid);
+    return;
+  }
+  if (shared::player_view_is_steered_by_another(*shooter) ||
+      shared::try_find_player_steered_by_hand_uid(entity_system, shooter->entity_id) != nullptr)
+  {
+    release_camera_swap(entity_system, *shooter);
+    return;
+  }
+
+  entities::Player_Entity* target = entity_system.get<entities::Player_Entity>(contact.target_uid);
+  if (target == nullptr)
+  {
+    impact_or_refuse(context, contact, "a player");
+    return;
+  }
+  if (shooter->health.current_health <= 0 || target->health.current_health <= 0)
+    return;
+  if (shared::player_view_is_steered_by_another(*target) ||
+      shared::try_find_player_steered_by_hand_uid(entity_system, target->entity_id) != nullptr)
+  {
+    log_terminal("Camera swap from uid {} onto uid {} refused: uid {} is already in a swap",
+                 contact.shooter_uid, contact.target_uid, target->entity_id);
+    return;
+  }
+
+  shooter->view_steered_by_uid = target->entity_id;
+  target->view_steered_by_uid  = shooter->entity_id;
+}
+
 // Positional: the splash pushes everything a projectile can land on within the radius, measured
 // to each box's CENTER, and does not care what stopped the shot. A zero normal is an airburst.
 static void apply_explode(server_context_t& context, const pending_contact_t& contact,
@@ -573,6 +623,7 @@ static void apply_contact(server_context_t& context, const shared::predicted_wor
   case shared::contact_effect_t::Land:       apply_land(context, world, contact); return;
   case shared::contact_effect_t::Leave_Zone: apply_leave_zone(context, contact); return;
   case shared::contact_effect_t::Merge:      apply_merge(context, contact, rule.merge); return;
+  case shared::contact_effect_t::Camera_Swap: apply_camera_swap(context, contact); return;
   }
 }
 
@@ -682,6 +733,22 @@ static void carry_merged_passengers(server_context_t& context)
   }
 }
 
+// A swapped pair either of whom died or left comes apart here, each body dropping its own hand.
+static void release_camera_swaps_whose_hand_is_gone(server_context_t& context)
+{
+  shared::Entity_System& entity_system = context.world.session.entity_system;
+
+  for (entities::Player_Entity& steered : entity_system.entities_of_type<entities::Player_Entity>())
+  {
+    if (!shared::player_view_is_steered_by_another(steered))
+      continue;
+    const entities::Player_Entity* hand =
+        entity_system.get<entities::Player_Entity>(steered.view_steered_by_uid);
+    if (hand == nullptr || hand->health.current_health <= 0 || steered.health.current_health <= 0)
+      steered.view_steered_by_uid = shared::null_entity_uid;
+  }
+}
+
 void update_contacts(server_context_t& context, const shared::predicted_world_storage_t& world)
 {
   std::vector<pending_hit_t> damage;
@@ -693,6 +760,7 @@ void update_contacts(server_context_t& context, const shared::predicted_world_st
   finish_reloads_that_came_due(context);
   refresh_reel_anchors(context);
   carry_merged_passengers(context);
+  release_camera_swaps_whose_hand_is_gone(context);
 }
 
 } // namespace server

@@ -7,13 +7,16 @@
 #include "entities/generated/entities/directional_light_entity_generated.hpp"
 #include "entities/generated/entities/geometry_owner_entity_generated.hpp"
 #include "entities/generated/entities/point_light_entity_generated.hpp"
+#include "entities/generated/entities/projected_image_entity_generated.hpp"
 #include "entities/generated/entities/projector_entity_generated.hpp"
 #include "entities/generated/entities/spot_light_entity_generated.hpp"
 #include "entity_system.hpp"
 #include "lighting.hpp"
 #include "log.hpp"
+#include "projected_image.hpp"
 #include "projector_mask.hpp"
 #include "reveal_light.hpp"
+#include "solid_shadows.hpp"
 
 #include <algorithm>
 #include <cfloat>
@@ -65,7 +68,6 @@ std::optional<shadow_light_t> try_shadow_light_from_entity(const entities::Entit
                          .frame_planes                   = compute_projector_frame_planes(*scene_light),
                          .frame_plane_count              = 4,
                          .frame_corners_at_unit_distance = compute_projector_frame_corners(*scene_light, 1.f),
-                         .picture                        = projector->texture,
                          .cuts_geometry                  = projector->light.cuts_geometry,
                          .keeps_every_volume             = projector_is_solid,
                          .solid_shadows                  = projector->light.solid_shadows};
@@ -587,9 +589,6 @@ const char* describe_shadow_cast_refusal(shadow_cast_refusal_t refusal)
   return "cast";
 }
 
-namespace
-{
-
 std::vector<shadow_light_t> gather_shadow_lights(const Entity_System& system, Span<const mover_t> movers,
                                                  const mover_rests_t& rests)
 {
@@ -601,8 +600,14 @@ std::vector<shadow_light_t> gather_shadow_lights(const Entity_System& system, Sp
       const path_pose_t      placed = get_placed_pose_for_entity(entity);
       const entities::Rides* rides  = entities::get_rides(&entity);
       const path_pose_t pose = rides != nullptr ? ridden_pose_in_cut(movers, rests, placed, *rides) : placed;
-      if (const std::optional<shadow_light_t> light = try_shadow_light_from_entity(entity, pose))
-        lights.push_back(*light);
+      std::optional<shadow_light_t> light = try_shadow_light_from_entity(entity, pose);
+      if (!light)
+        continue;
+      if constexpr (std::is_same_v<Light_T, entities::Projector_Entity>)
+        if (const entities::Projected_Image_Entity* image =
+                find_projected_image_for_projector(system, entity.entity_id))
+          light->image = image->entity_id;
+      lights.push_back(*light);
     }
   };
   gather.template operator()<entities::Point_Light_Entity>();
@@ -612,18 +617,11 @@ std::vector<shadow_light_t> gather_shadow_lights(const Entity_System& system, Sp
   return lights;
 }
 
-// Erased receives and casts from behind itself; Receives (solid only in shadow) never casts. Casts_From_Lens is a
-// thing in front of what the picture lands on: under a Solid_From_Lens_To_Shadow light its volume is solid from the
-// lens, where a plain Casts piece (the room) is solid behind itself alone (solid_shadows.hpp).
-enum class piece_role_t : uint8_t
+namespace
 {
-  Casts,
-  Casts_From_Lens,
-  Receives,
-  Erased,
-  Nothing
-};
 
+// Under a Solid_From_Lens_To_Shadow light a Casts_From_Lens piece's volume is solid from the lens, where a plain Casts
+// piece (the room) is solid behind itself alone (solid_shadows.hpp).
 bool piece_role_casts(piece_role_t role)
 {
   return role == piece_role_t::Casts || role == piece_role_t::Casts_From_Lens;
@@ -632,6 +630,53 @@ bool piece_role_casts(piece_role_t role)
 bool piece_role_receives(piece_role_t role)
 {
   return role == piece_role_t::Receives || role == piece_role_t::Erased;
+}
+
+bool same_vec3(const linalg::vec3f& a, const linalg::vec3f& b)
+{
+  return a.x == b.x && a.y == b.y && a.z == b.z;
+}
+
+// Bit for bit: what a memo was built for against the light this cut gathered.
+bool same_shadow_light(const shadow_light_t& a, const shadow_light_t& b)
+{
+  if (a.uid != b.uid || a.directional != b.directional || !same_vec3(a.apex, b.apex) ||
+      !same_vec3(a.direction, b.direction) || a.range != b.range ||
+      a.cosine_of_outer_angle != b.cosine_of_outer_angle || a.frame_plane_count != b.frame_plane_count ||
+      a.image != b.image || a.cuts_geometry != b.cuts_geometry || a.keeps_every_volume != b.keeps_every_volume ||
+      a.solid_shadows != b.solid_shadows)
+    return false;
+  for (uint32_t index = 0; index < a.frame_plane_count; ++index)
+    if (!same_vec3(a.frame_planes[index].point, b.frame_planes[index].point) ||
+        !same_vec3(a.frame_planes[index].normal, b.frame_planes[index].normal) ||
+        !same_vec3(a.frame_corners_at_unit_distance[index], b.frame_corners_at_unit_distance[index]))
+      return false;
+  return true;
+}
+
+bool same_planes(Span<const Plane> a, Span<const Plane> b)
+{
+  if (a.count != b.count)
+    return false;
+  for (uint32_t index = 0; index < a.count; ++index)
+    if (!same_vec3(a[index].point, b[index].point) || !same_vec3(a[index].normal, b[index].normal))
+      return false;
+  return true;
+}
+
+// A memo's counts into this computation's: everything an entry counted when built, which is every count but the
+// computation's own (its lights, its caster and player pieces, its receivers and what it kept).
+void add_shadow_volume_report_counts(shadow_volume_report_t& into, const shadow_volume_report_t& still)
+{
+  into.mask_pieces += still.mask_pieces;
+  into.cast += still.cast;
+  into.refused_inside_caster += still.refused_inside_caster;
+  into.refused_open_silhouette += still.refused_open_silhouette;
+  into.refused_on_silhouette += still.refused_on_silhouette;
+  into.refused_too_many_planes += still.refused_too_many_planes;
+  into.refused_outside_beam += still.refused_outside_beam;
+  into.culled_reaching_nothing += still.culled_reaching_nothing;
+  into.refused.insert(into.refused.end(), still.refused.begin(), still.refused.end());
 }
 
 // Owners resolved once per geometry index rather than once per primitive, since a mesh is several pieces.
@@ -668,17 +713,18 @@ struct visited_piece_t
   Span<const std::vector<linalg::vec3>> polygons;
   // A player's piece: cast into the solid_shadows lights alone.
   bool                                  casts_only_into_solid_shadows = false;
+  // A moving piece's index within its mover or player: with the owner, its name in the moving memo.
+  uint32_t                              index_in_owner = 0;
 };
 
-// Every piece in the one order both collects agree on, keyed by its place in it: the static pieces
-// in the BVH's order, then every mover's pieces, then every player's. A mover's pieces cast and occlude; none receives. An
-// erased receiver casts from behind itself. A mover that is a light's (a solid beam, a solid shadow) is light
-// or dark: it casts no shadow and stops none, whichever collect it is in by.
+// The pieces in the one order both collects agree on, keyed by their place in it (the key is the readout's and the
+// erased receiver's self-exclusion, nothing else's): the still pieces in the BVH's order, then every mover's
+// pieces, then every player's. A mover's pieces cast and occlude; none receives. An erased receiver casts from
+// behind itself. A mover that is a light's (a solid beam, a solid shadow) is light or dark: it casts no shadow and
+// stops none, whichever collect it is in by.
 template <typename Visit_T>
-void for_each_shadow_piece(const Entity_System& system, const Bounding_Volume_Hierarchy& bvh,
-                           Span<const entity_uid_t> owner_of, Span<const piece_role_t> role_of,
-                           Span<const mover_t> movers, Span<const player_shadow_caster_t> player_casters,
-                           Visit_T&& visit)
+void for_each_still_shadow_piece(const Bounding_Volume_Hierarchy& bvh, Span<const entity_uid_t> owner_of,
+                                 Span<const piece_role_t> role_of, Visit_T&& visit)
 {
   uint32_t key = 0;
   for (const BVH_Primitive& primitive : bvh.primitives)
@@ -692,26 +738,39 @@ void for_each_shadow_piece(const Entity_System& system, const Bounding_Volume_Hi
                           .planes   = primitive.collision_planes,
                           .polygons = primitive.face_polygons});
   }
+}
+
+template <typename Visit_T>
+void for_each_moving_shadow_piece(const Entity_System& system, Span<const mover_t> movers,
+                                  Span<const player_shadow_caster_t> player_casters, uint32_t first_key,
+                                  Visit_T&& visit)
+{
+  uint32_t key = first_key;
   for (const mover_t& mover : movers)
   {
     if (entities::get_component<entities::Light>(system.try_find(mover.uid)) != nullptr)
       continue;
-    for (const collision_piece_t& piece : mover.pieces)
-      visit(visited_piece_t{.key      = key++,
-                            .role     = piece_role_t::Casts_From_Lens,
-                            .owner    = mover.uid,
-                            .bounds   = piece.bounds,
-                            .planes   = piece.planes,
-                            .polygons = piece.face_polygons});
+    for (uint32_t index = 0; index < mover.pieces.size(); ++index)
+      visit(visited_piece_t{.key            = key++,
+                            .role           = piece_role_t::Casts_From_Lens,
+                            .owner          = mover.uid,
+                            .bounds         = mover.pieces[index].bounds,
+                            .planes         = mover.pieces[index].planes,
+                            .polygons       = mover.pieces[index].face_polygons,
+                            .index_in_owner = index});
   }
-  for (const player_shadow_caster_t& caster : player_casters)
+  for (uint32_t index = 0; index < player_casters.size(); ++index)
+  {
+    const player_shadow_caster_t& caster = player_casters[index];
     visit(visited_piece_t{.key                           = key++,
                           .role                          = piece_role_t::Casts_From_Lens,
                           .owner                         = caster.uid,
                           .bounds                        = caster.piece.bounds,
                           .planes                        = caster.piece.planes,
                           .polygons                      = caster.piece.face_polygons,
-                          .casts_only_into_solid_shadows = true});
+                          .casts_only_into_solid_shadows = true,
+                          .index_in_owner                = index});
+  }
 }
 
 } // namespace
@@ -720,10 +779,11 @@ shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const
                                               Span<const entity_uid_t> owner_of, Span<const mover_t> movers,
                                               Span<const player_shadow_caster_t> player_casters,
                                               const mover_rests_t& rests, projector_mask_cache_t& projector_masks,
-                                              std::vector<shadow_volume_t>& out)
+                                              shadow_memo_t& memo, std::vector<shadow_volume_t>& out)
 {
   out.clear();
   shadow_volume_report_t report;
+  ++memo.generation;
 
   const std::vector<shadow_light_t> lights  = gather_shadow_lights(system, movers, rests);
   report.cutting_lights                     = static_cast<uint32_t>(lights.size());
@@ -755,11 +815,15 @@ shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const
   for (const shadow_light_t& light : lights)
     any_light_keeps_every_volume = any_light_keeps_every_volume || light.keeps_every_volume;
   if (lights.empty() || (receivers.empty() && !any_light_keeps_every_volume))
+  {
+    memo.lights.clear();
     return report;
+  }
 
   std::vector<shadow_volume_t> behind;
 
-  const auto cast_piece_into = [&](const shadow_light_t& light, const visited_piece_t& piece)
+  const auto cast_piece_into = [&](const shadow_light_t& light, const visited_piece_t& piece,
+                                   std::vector<shadow_volume_t>& into, shadow_volume_report_t& counts)
   {
     shadow_cast_t cast;
     behind.clear();
@@ -774,16 +838,16 @@ shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const
     switch (cast.refusal)
     {
       case shadow_cast_refusal_t::None: break;
-      case shadow_cast_refusal_t::Light_Inside_Caster: ++report.refused_inside_caster; break;
-      case shadow_cast_refusal_t::Silhouette_Open: ++report.refused_open_silhouette; break;
-      case shadow_cast_refusal_t::Light_On_Silhouette: ++report.refused_on_silhouette; break;
-      case shadow_cast_refusal_t::Too_Many_Planes: ++report.refused_too_many_planes; break;
-      case shadow_cast_refusal_t::Outside_Spot_Beam: ++report.refused_outside_beam; break;
+      case shadow_cast_refusal_t::Light_Inside_Caster: ++counts.refused_inside_caster; break;
+      case shadow_cast_refusal_t::Silhouette_Open: ++counts.refused_open_silhouette; break;
+      case shadow_cast_refusal_t::Light_On_Silhouette: ++counts.refused_on_silhouette; break;
+      case shadow_cast_refusal_t::Too_Many_Planes: ++counts.refused_too_many_planes; break;
+      case shadow_cast_refusal_t::Outside_Spot_Beam: ++counts.refused_outside_beam; break;
     }
     if (cast.refusal != shadow_cast_refusal_t::None)
     {
       if (cast.refusal != shadow_cast_refusal_t::Outside_Spot_Beam)
-        report.refused.push_back({.piece  = piece.key,
+        counts.refused.push_back({.piece  = piece.key,
                                   .light  = light.uid,
                                   .center = get_aabb_center(piece.bounds),
                                   .reason = cast.refusal});
@@ -791,8 +855,8 @@ shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const
     }
     for (shadow_volume_t& volume : behind)
     {
-      ++report.cast;
-      volume.caster_piece   = piece.key;
+      ++counts.cast;
+      volume.static_index   = SHADOW_VOLUME_NOT_STATIC;
       volume.caster_casts_from_lens = piece.role == piece_role_t::Casts_From_Lens;
       if (volume.solid_shadows == entities::Solid_Shadows::Solid_From_Lens_To_Shadow &&
           piece.role != piece_role_t::Casts_From_Lens)
@@ -806,21 +870,112 @@ shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const
         }
       if (!reaches_a_receiver && !light.keeps_every_volume)
       {
-        ++report.culled_reaching_nothing;
+        ++counts.culled_reaching_nothing;
         continue;
       }
       volume.reaches_receiver = reaches_a_receiver;
-      out.push_back(volume);
+      into.push_back(volume);
     }
   };
 
-  // Not cached (todo.md): a static piece under a still light recasts every cut; a per-light memo is the easy gain.
-  uint32_t next_key = 0;
-  for_each_shadow_piece(system, bvh, owner_of, role_of, movers, player_casters, [&](const visited_piece_t& piece)
+  // The still half, per light from its memo. The caster count is the cut's, so it is taken once, not per light.
+  uint32_t still_piece_count = 0;
+  for_each_still_shadow_piece(bvh, owner_of, role_of, [&](const visited_piece_t& piece)
   {
-    next_key = piece.key + 1;
-    if (!piece_role_casts(piece.role) && piece.role != piece_role_t::Erased)
-      return;
+    ++still_piece_count;
+    if (piece_role_casts(piece.role) || piece.role == piece_role_t::Erased)
+      ++report.caster_pieces;
+  });
+  for (size_t index = 0; index < lights.size(); ++index)
+  {
+    const shadow_light_t&   light = lights[index];
+    const projector_mask_t* mask  = nullptr;
+    if (light.image != null_entity_uid)
+    {
+      const entities::Projected_Image_Entity* image =
+          entities::entity_as<entities::Projected_Image_Entity>(system.try_find(light.image));
+      const entities::Projector_Entity* projector =
+          entities::entity_as<entities::Projector_Entity>(system.try_find(light.uid));
+      if (image == nullptr || projector == nullptr)
+        fatal_error("[shadow] projector {} shows image {}, which the gather found and the system now lacks",
+                    light.uid, light.image);
+      mask = &find_or_compute_projector_mask_for_image(projector_masks, *image, projector->aspect);
+    }
+    const uint64_t picture_hash = mask != nullptr ? mask->picture_hash : 0;
+
+    shadow_light_memo_t* entry = nullptr;
+    for (shadow_light_memo_t& candidate : memo.lights)
+      if (candidate.light == light.uid)
+        entry = &candidate;
+    if (entry == nullptr)
+    {
+      memo.lights.push_back({.light = light.uid});
+      entry = &memo.lights.back();
+    }
+    entry->last_used = memo.generation;
+
+    const bool reusable = same_shadow_light(entry->built_for, light) && entry->built_for_bvh == &bvh &&
+                          entry->built_for_roles == role_of && entry->built_for_picture_hash == picture_hash;
+    if (!reusable)
+    {
+      entry->built_for              = light;
+      entry->built_for_bvh          = &bvh;
+      entry->built_for_roles        = role_of;
+      entry->built_for_picture_hash = picture_hash;
+      entry->volumes.clear();
+      entry->solid_pieces.clear();
+      entry->report = {};
+      ++memo.builds;
+
+      const auto cast_still_piece = [&](const visited_piece_t& piece)
+      {
+        if (!shadow_light_touches_box(light, clips[index], piece.bounds))
+        {
+          ++entry->report.refused_outside_beam;
+          return;
+        }
+        cast_piece_into(light, piece, entry->volumes, entry->report);
+      };
+      for_each_still_shadow_piece(bvh, owner_of, role_of, [&](const visited_piece_t& piece)
+      {
+        if (piece_role_casts(piece.role) || piece.role == piece_role_t::Erased)
+          cast_still_piece(piece);
+      });
+
+      // The dark of the picture, as pieces on the glass, cast into this projector alone: a piece on one lens
+      // stands in no other light's way.
+      uint32_t mask_key = still_piece_count;
+      if (mask != nullptr)
+        for (const projector_mask_quad_t& quad : mask->quads)
+        {
+          const std::optional<collision_piece_t> piece = try_build_projector_mask_piece(light, quad);
+          if (!piece)
+            continue;
+          ++entry->report.mask_pieces;
+          cast_still_piece(visited_piece_t{.key      = mask_key++,
+                                           .role     = piece_role_t::Casts,
+                                           .owner    = light.uid,
+                                           .bounds   = piece->bounds,
+                                           .planes   = piece->planes,
+                                           .polygons = piece->face_polygons});
+        }
+
+      for (uint32_t volume_index = 0; volume_index < entry->volumes.size(); ++volume_index)
+        entry->volumes[volume_index].static_index = volume_index;
+      if (light.solid_shadows != entities::Solid_Shadows::None)
+        for (const shadow_volume_t& volume : entry->volumes)
+          entry->solid_pieces.push_back(try_build_solid_shadow_piece(volume));
+    }
+
+    out.insert(out.end(), entry->volumes.begin(), entry->volumes.end());
+    add_shadow_volume_report_counts(report, entry->report);
+  }
+  std::erase_if(memo.lights, [&](const shadow_light_memo_t& entry) { return entry.last_used != memo.generation; });
+
+  // The moving half, every tick, each piece under each light from its moving memo while neither has changed.
+  std::vector<shadow_volume_t> moving_cast;
+  for_each_moving_shadow_piece(system, movers, player_casters, still_piece_count, [&](const visited_piece_t& piece)
+  {
     if (piece.casts_only_into_solid_shadows)
       ++report.player_pieces;
     else
@@ -830,36 +985,50 @@ shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const
       const shadow_light_t& light = lights[index];
       if (light.solid_shadows == entities::Solid_Shadows::None && piece.casts_only_into_solid_shadows)
         continue;
-      if (!shadow_light_touches_box(light, clips[index], piece.bounds))
+
+      shadow_moving_memo_t* entry = nullptr;
+      for (shadow_moving_memo_t& candidate : memo.moving)
+        if (candidate.light == light.uid && candidate.owner == piece.owner && candidate.piece_index == piece.index_in_owner)
+          entry = &candidate;
+      if (entry == nullptr)
       {
-        ++report.refused_outside_beam;
-        continue;
+        memo.moving.push_back({.light = light.uid, .owner = piece.owner, .piece_index = piece.index_in_owner});
+        entry = &memo.moving.back();
       }
-      cast_piece_into(light, piece);
+      entry->last_used = memo.generation;
+
+      if (!same_shadow_light(entry->built_for, light) || !same_planes(entry->built_from_planes, piece.planes))
+      {
+        entry->built_for = light;
+        entry->built_from_planes.assign(piece.planes.begin(), piece.planes.end());
+        entry->volume.reset();
+        entry->solid_piece.reset();
+        entry->counts = {};
+        ++memo.moving_builds;
+        if (!shadow_light_touches_box(light, clips[index], piece.bounds))
+          ++entry->counts.refused_outside_beam;
+        else
+        {
+          moving_cast.clear();
+          cast_piece_into(light, piece, moving_cast, entry->counts);
+          if (moving_cast.size() > 1)
+            fatal_error("[shadow] mover {} piece {} threw {} volumes under light {}; a moving piece throws one",
+                        piece.owner, piece.index_in_owner, moving_cast.size(), light.uid);
+          if (!moving_cast.empty())
+          {
+            entry->volume                     = moving_cast[0];
+            entry->volume->caster_piece_index = piece.index_in_owner;
+            if (light.solid_shadows != entities::Solid_Shadows::None)
+              entry->solid_piece = try_build_solid_shadow_piece(*entry->volume);
+          }
+        }
+      }
+      if (entry->volume)
+        out.push_back(*entry->volume);
+      add_shadow_volume_report_counts(report, entry->counts);
     }
   });
-
-  // The dark of each projector's picture, as pieces on its glass, cast into that projector alone: a piece on
-  // one lens stands in no other light's way.
-  for (const shadow_light_t& light : lights)
-  {
-    if (light.picture == assets::texture_asset::Missing)
-      continue;
-    const projector_mask_t& mask = find_or_compute_projector_mask(projector_masks, light.picture);
-    for (const projector_mask_rectangle_t& rectangle : mask.rectangles)
-    {
-      const std::optional<collision_piece_t> piece = try_build_projector_mask_piece(light, rectangle);
-      if (!piece)
-        continue;
-      ++report.mask_pieces;
-      cast_piece_into(light, visited_piece_t{.key      = next_key++,
-                                             .role     = piece_role_t::Casts,
-                                             .owner    = light.uid,
-                                             .bounds   = piece->bounds,
-                                             .planes   = piece->planes,
-                                             .polygons = piece->face_polygons});
-    }
-  }
+  std::erase_if(memo.moving, [&](const shadow_moving_memo_t& entry) { return entry.last_used != memo.generation; });
 
   // The volumes that change the floor first; the rest dealt round-robin by light, each light's nearest
   // caster first, so the renderer's slots hold a few casters of every beam before many of one.

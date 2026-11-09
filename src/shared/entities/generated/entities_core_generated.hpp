@@ -81,9 +81,10 @@ enum class Weapon : uint8_t
   Eraser = 20,
   Merge = 21,
   Red_Lens = 22,
+  Camera_Swapper = 23,
 };
 
-constexpr uint32_t Weapon_COUNT = 23;
+constexpr uint32_t Weapon_COUNT = 24;
 
 const char* to_string(Weapon value);
 template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text);
@@ -182,6 +183,24 @@ constexpr uint32_t Toucher_Filter_COUNT = 3;
 
 const char* to_string(Toucher_Filter value);
 template <> std::optional<Toucher_Filter> try_from_string<Toucher_Filter>(std::string_view text);
+
+enum class Image_Row : uint8_t
+{
+  Row_0 = 0,
+  Row_1 = 1,
+  Row_2 = 2,
+  Row_3 = 3,
+  Row_4 = 4,
+  Row_5 = 5,
+  Row_6 = 6,
+  Row_7 = 7,
+  Row_8 = 8,
+};
+
+constexpr uint32_t Image_Row_COUNT = 9;
+
+const char* to_string(Image_Row value);
+template <> std::optional<Image_Row> try_from_string<Image_Row>(std::string_view text);
 
 enum class Solid_Shadows : uint8_t
 {
@@ -330,19 +349,20 @@ enum class enum_type : uint16_t
   Hit_Region = 7,
   Light_Mode = 8,
   Toucher_Filter = 9,
-  Solid_Shadows = 10,
-  Aim_Pose = 11,
-  Round_Phase = 12,
-  Game_Mode = 13,
-  Round_End_Reason = 14,
-  Match_Request = 15,
-  Easing = 16,
-  Reveal_Cone_Kind = 17,
-  Lens_Filter = 18,
-  Movement_Override = 19,
+  Image_Row = 10,
+  Solid_Shadows = 11,
+  Aim_Pose = 12,
+  Round_Phase = 13,
+  Game_Mode = 14,
+  Round_End_Reason = 15,
+  Match_Request = 16,
+  Easing = 17,
+  Reveal_Cone_Kind = 18,
+  Lens_Filter = 19,
+  Movement_Override = 20,
 };
 
-constexpr uint32_t ENUM_TYPE_COUNT = 20;
+constexpr uint32_t ENUM_TYPE_COUNT = 21;
 
 const enum_type_info_t& enum_info(enum_type type);
 
@@ -391,11 +411,12 @@ enum class entity_type : uint16_t
   Lens_Entity = 37,
   Projector_Entity = 38,
   Projected_Ball_Entity = 39,
+  Projected_Image_Entity = 40,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 40;
+constexpr uint32_t ENTITY_TYPE_COUNT = 41;
 
 enum class component_type : uint16_t
 {
@@ -488,6 +509,12 @@ template <> struct enum_traits<entities::Toucher_Filter>
 {
   static constexpr uint32_t count = entities::Toucher_Filter_COUNT;
   static constexpr entities::enum_type type = entities::enum_type::Toucher_Filter;
+};
+
+template <> struct enum_traits<entities::Image_Row>
+{
+  static constexpr uint32_t count = entities::Image_Row_COUNT;
+  static constexpr entities::enum_type type = entities::enum_type::Image_Row;
 };
 
 template <> struct enum_traits<entities::Solid_Shadows>

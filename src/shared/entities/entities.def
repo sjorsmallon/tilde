@@ -44,7 +44,8 @@ Weapon :: enum {
     Flashlight,
     Eraser,
     Merge,
-    Red_Lens
+    Red_Lens,
+    Camera_Swapper
 }
 
 Fire_Resolution :: enum { None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy, Pilot, Recall, Reveal_Light, Reveal_Light_Overhead, Erase_Light, Lens_View }
@@ -60,6 +61,8 @@ Hit_Region :: enum { Head, Torso, Legs }
 Light_Mode :: enum { Baked, Mixed, Dynamic }
 // What a Trigger_Volume_Entity listens to: anything in Touchable's `by` list, players only, or projected balls only.
 Toucher_Filter :: enum { Anything, Players, Projected_Balls }
+// The lines of a Projected_Image_Entity's text, one string each: the DSL keys an array by an enum.
+Image_Row :: enum { Row_0, Row_1, Row_2, Row_3, Row_4, Row_5, Row_6, Row_7, Row_8 }
 // Which of a light's dark is a mover (shared/lighting/solid_shadows.hpp, projector_plan.md ss1c). Shadow_Volumes_Only:
 // the dark air, from the caster to where its shadow lands. Solid_From_Lens_To_Shadow: the whole pyramid from the lens
 // through the caster to where its shadow lands, so a hull whose shadow lies on a caster's shadow is held at any depth.
@@ -303,6 +306,12 @@ Colorable :: trait {
     emits   Color_Changed(color: v3)
 }
 
+// A text whose characters can be set one at a time, `character` printable ASCII (32 to 126):
+// `ent_fire <image> Set_Character column=3 row=5 character=77`.
+Typeable :: trait {
+    accepts Set_Character(column: i32, row: i32, character: i32)
+}
+
 Counting :: trait requires Counter {
     accepts Add(amount: i32), Reset()
     emits Limit_Reached(), Fell_Below_Limit()
@@ -381,6 +390,8 @@ Player_Entity :: entity @runtime_only @predicted is Mortal, Mobile, Armable, Res
     // what it watches through a lens holds (shared::collect_lens_watchers). Exact: the client cuts its own from the same numbers.
     view_fov_degrees:  f32_exact = 90.0 @Networked
     view_aspect:       f32_exact = 1.7777778 @Networked
+    // The Camera Swapper: whose mouse turns THIS body's view while its owner keeps the keys (shared/camera_swap.hpp). Null is its own.
+    view_steered_by_uid: entity          @Networked
 
     health:            Health = {current_health = 100, max_health = 100}
 
@@ -537,7 +548,6 @@ Canopy_Entity :: entity @runtime_only @predicted {
     // Where `position` was the tick before it was last written: the mover's start pose, so a snapshot carries both.
     position_at_previous_tick: v3              @Networked
     half_extents:              v3 = {48, 4, 48}
-    // Drawn at half_extents, never at render.scale.
     render:                    Render = { mesh = .Box, color = {0.4, 0.9, 1} }
 }
 
@@ -876,7 +886,8 @@ Lens_Entity :: entity @predicted is Switchable {
 // The rectangular light a picture needs (projector_plan.md ss2b): a frame of `aspect` by `half_angle_degrees`,
 // rolled by its orientation, with hard edges and no cone, falloff or beam. Its shadow map IS the picture's
 // uv, so it always takes a shadow layer. Dynamic only: the mask changes, so the bake never sees it. @predicted
-// because a solid_shadows light's volumes are movers (shared/lighting/solid_shadows.hpp).
+// because a solid_shadows light's volumes are movers (shared/lighting/solid_shadows.hpp). What the frame
+// shows is the Projected_Image_Entity naming it; with none it is a plain white frame.
 Projector_Entity :: entity @predicted is Colorable, Switchable {
     switch_state:       Enabled
     light:              Light = { mode = .Dynamic }
@@ -885,8 +896,6 @@ Projector_Entity :: entity @predicted is Colorable, Switchable {
     // Half the VERTICAL angle of the frame, from the axis; the width is aspect times the height.
     half_angle_degrees: f32 = 20.0     @Editable
     aspect:             f32 = 1.7778   @Editable
-    // What the frame shows. Missing is no picture: a plain white frame.
-    texture:            texture_asset = .Missing @Editable
 }
 
 // A ball in a projector's picture (projector_plan.md ss3b): a disc in picture uv (u right, v down, in [0, 1])
@@ -901,4 +910,16 @@ Projected_Ball_Entity :: entity is Colorable {
     uv:              v3_exact                  @Networked
     velocity:        v3_exact                  @Networked
     respawn_count:   u8                        @Networked
+}
+
+// What a projector shows: `texture` under 9 lines of 32 characters, u right along a line, v down the lines; on
+// a 16 by 9 frame a cell is the monospace font's advance box, so glyphs abut as in a terminal. The text is the
+// state, written by Set_Character; both ends derive the picture from it (projected_image.hpp): the glyphs
+// rasterised at the picture layer's resolution for the drawn light, and each character's quads
+// (glyph_solids.hpp) for the solid dark. The image entity is placed where it can be picked; the picture is
+// wherever its projector points.
+Projected_Image_Entity :: entity is Typeable {
+    projector: entity                    @Networked @Editable
+    texture:   texture_asset = .Missing  @Editable
+    text:      string<32>[Image_Row]     @Networked @Editable
 }

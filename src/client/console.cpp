@@ -406,7 +406,7 @@ void shadow_volume_report(const command_context_t &)
   const shared::shadow_volume_report_t counts = shared::compute_shadow_volumes(
       ctx.world.session.entity_system, ctx.world.session.bvh, ctx.world.session.owner_of, storage.movers,
       storage.player_shadow_casters, ctx.world.session.mover_rests, ctx.world.session.projector_mask_cache,
-      storage.shadow_volumes);
+      ctx.world.session.shadow_memo, storage.shadow_volumes);
   client::console::get().print_line(shared::describe_shadow_volume_report(counts, storage.shadow_volumes));
 }
 

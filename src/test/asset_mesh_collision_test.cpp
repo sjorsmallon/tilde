@@ -384,9 +384,9 @@ int main()
     std::vector<shared::shadow_volume_t> volumes;
     std::vector<shared::mover_t>         movers;
     shared::projector_mask_cache_t       masks;
-    shared::solid_shadow_cache_t         cache;
-    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, volumes);
-    shared::compute_solid_shadows(system, volumes, cache, movers);
+    shared::shadow_memo_t                memo;
+    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, memo, volumes);
+    shared::compute_solid_shadows(system, volumes, memo, movers);
     size_t ring_volumes = 0;
     for (const shared::shadow_volume_t& volume : volumes)
       if (volume.caster_bounds.min.y > 100.f)
@@ -449,8 +449,8 @@ int main()
       const Bounding_Volume_Hierarchy bound_bvh = build_world(floor, Span<const shared::collision_piece_t>(&bound, 1));
       std::vector<shared::shadow_volume_t> bound_volumes;
       std::vector<shared::mover_t>         bound_movers;
-      shared::compute_shadow_volumes(system, bound_bvh, owner_of, {}, {}, {}, masks, bound_volumes);
-      shared::compute_solid_shadows(system, bound_volumes, cache, bound_movers);
+      shared::compute_shadow_volumes(system, bound_bvh, owner_of, {}, {}, {}, masks, memo, bound_volumes);
+      shared::compute_solid_shadows(system, bound_volumes, memo, bound_movers);
       bool hole_filled = false;
       for (const shared::mover_t& mover : bound_movers)
         if (mover.uid == sun_uid && inside_any_piece(mover.pieces, {0.f, 100.f, 0.f}))

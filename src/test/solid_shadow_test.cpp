@@ -89,9 +89,9 @@ int main()
   std::vector<shared::shadow_volume_t> volumes;
   std::vector<shared::mover_t>         movers;
   shared::projector_mask_cache_t       masks;
-  shared::solid_shadow_cache_t         cache;
-  shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, volumes);
-  shared::compute_solid_shadows(system, volumes, cache, movers);
+  shared::shadow_memo_t                memo;
+  shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, memo, volumes);
+  shared::compute_solid_shadows(system, volumes, memo, movers);
 
   printf("[pin] a solid_shadows light's volumes are one mover\n");
   {
@@ -102,29 +102,63 @@ int main()
     check(!movers.empty() && !movers[0].crushes, "a shadow crushes nobody");
   }
 
-  printf("[pin] a piece is built once: the same volume next cut is a copy, a moved lamp's is rebuilt\n");
+  printf("[pin] a still light's half is built once: the next cut copies it, a moved lamp's is rebuilt\n");
   {
-    check(cache.builds == 2, "the first cut built both pieces");
+    check(memo.builds == 1 && memo.lights.size() == 1, "the first cut built the lamp's memo");
     std::vector<shared::mover_t> again;
-    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, volumes);
-    shared::compute_solid_shadows(system, volumes, cache, again);
-    check(cache.builds == 2, "the same lamp over the same crate builds nothing");
+    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, memo, volumes);
+    shared::compute_solid_shadows(system, volumes, memo, again);
+    check(memo.builds == 1, "the same lamp over the same crate builds nothing");
     check(again.size() == 1 && again[0].pieces.size() == 2 && !movers.empty() &&
               again[0].pieces[1].planes.size() == movers[0].pieces[1].planes.size(),
           "and the copied pieces are the pieces");
 
+    // A platform far from the crate, as a rocket path's segment is: a mover is cast every cut and enters no memo.
+    shared::mover_t segment;
+    segment.uid                         = system.spawn(entities::entity_type::Extending_Platform_Entity);
+    segment.pose_at_tick_start.position = {600.f, 16.f, 600.f};
+    segment.pose_at_tick_end            = segment.pose_at_tick_start;
+    for (const shared::collision_piece_t& piece :
+         shared::get_collision_pieces(shared::make_box_mesh({600.f, 16.f, 600.f}, {32.f, 4.f, 32.f}), 0))
+      segment.pieces.push_back(piece);
+    segment.swept_bounds = segment.pieces[0].bounds;
+    std::vector<shared::mover_t> with_segment;
+    shared::compute_shadow_volumes(system, bvh, owner_of, Span<const shared::mover_t>(&segment, 1), {}, {}, masks,
+                                   memo, volumes);
+    shared::compute_solid_shadows(system, volumes, memo, with_segment);
+    check(memo.builds == 1, "a mover appearing anywhere rebuilds nothing of the still half");
+    check(volumes.size() == 3, "the segment's own volume is cast beside the two still ones");
+    check(!with_segment.empty() && with_segment[0].pieces.size() == 3, "and all three are solid");
+    check(memo.moving_builds == 1, "the segment's volume and solid piece were built once");
+    std::vector<shared::mover_t> segment_again;
+    shared::compute_shadow_volumes(system, bvh, owner_of, Span<const shared::mover_t>(&segment, 1), {}, {}, masks,
+                                   memo, volumes);
+    shared::compute_solid_shadows(system, volumes, memo, segment_again);
+    check(memo.moving_builds == 1 && volumes.size() == 3 && !segment_again.empty() &&
+              segment_again[0].pieces.size() == 3,
+          "a segment that stands still is not rebuilt: its volume and solid piece are copies");
+    segment.pieces[0].planes[0].point.y += 1.f;
+    shared::compute_shadow_volumes(system, bvh, owner_of, Span<const shared::mover_t>(&segment, 1), {}, {}, masks,
+                                   memo, volumes);
+    check(memo.moving_builds == 2 && memo.moving.size() == 1, "a segment that moved is rebuilt in place");
+    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, memo, volumes);
+    check(memo.moving.empty(), "a segment that is gone leaves no entry");
+
     lamp->position.y += 1.f;
     std::vector<shared::mover_t> moved;
-    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, volumes);
-    shared::compute_solid_shadows(system, volumes, cache, moved);
-    check(cache.builds == 4, "a lamp that moved throws new planes: both pieces rebuilt");
-    check(cache.entries.size() == 2, "and overwrite their entries rather than adding");
+    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, memo, volumes);
+    shared::compute_solid_shadows(system, volumes, memo, moved);
+    check(memo.builds == 2, "a lamp that moved throws new planes: its half rebuilt");
+    check(memo.lights.size() == 1, "in place rather than beside the old");
 
     lamp->position.y -= 1.f;
     std::vector<shared::mover_t> back;
-    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, volumes);
-    shared::compute_solid_shadows(system, volumes, cache, back);
-    check(cache.builds == 6, "moved back is new planes again: the cache holds one past build per volume");
+    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, memo, volumes);
+    shared::compute_solid_shadows(system, volumes, memo, back);
+    check(memo.builds == 3, "moved back is new planes again: the memo holds one past build per light");
+    check(back.size() == 1 && back[0].pieces.size() == 2 && !movers.empty() &&
+              back[0].pieces[1].planes.size() == movers[0].pieces[1].planes.size(),
+          "and the rebuilt pieces are the first cut's");
   }
 
   printf("[pin] a hull on the shadow's top face is held above the floor, on ground\n");
@@ -154,8 +188,8 @@ int main()
     lamp->light.solid_shadows = entities::Solid_Shadows::Solid_From_Lens_To_Shadow;
     std::vector<shared::shadow_volume_t> lens_volumes;
     std::vector<shared::mover_t>         lens_movers;
-    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, lens_volumes);
-    shared::compute_solid_shadows(system, lens_volumes, cache, lens_movers);
+    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, memo, lens_volumes);
+    shared::compute_solid_shadows(system, lens_volumes, memo, lens_movers);
     check(lens_volumes.size() == 2 && lens_volumes[1].light_facing_plane_count > 0,
           "the volume itself still begins at the crate's lit faces: the drawn body is unchanged");
     bool floor_behind_only = false;
@@ -185,9 +219,9 @@ int main()
     check(beside && beside->mover_uid == shared::null_entity_uid && beside->id.index == 0,
           "beside the pyramid the hull falls to the floor");
     lamp->light.solid_shadows = entities::Solid_Shadows::Shadow_Volumes_Only;
-    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, volumes);
+    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, memo, volumes);
     movers.clear();
-    shared::compute_solid_shadows(system, volumes, cache, movers);
+    shared::compute_solid_shadows(system, volumes, memo, movers);
   }
 
   printf("[pin] a player held by the shadow gets a plank from its feet to where its shadow lands\n");
@@ -244,8 +278,8 @@ int main()
 
     std::vector<shared::shadow_volume_t> player_volumes;
     std::vector<shared::mover_t>         player_movers;
-    shared::compute_shadow_volumes(system, bvh, owner_of, {}, casters, {}, masks, player_volumes);
-    shared::compute_solid_shadows(system, player_volumes, cache, player_movers);
+    shared::compute_shadow_volumes(system, bvh, owner_of, {}, casters, {}, masks, memo, player_volumes);
+    shared::compute_solid_shadows(system, player_volumes, memo, player_movers);
     check(player_volumes.size() == 3, "the floor, the crate and the player each throw a volume");
     for (const shared::shadow_volume_t& volume : player_volumes)
     {
@@ -298,8 +332,8 @@ int main()
     lamp->light.cuts_geometry     = true;
     std::vector<shared::shadow_volume_t> plain_volumes;
     std::vector<shared::mover_t>         plain_movers;
-    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks,plain_volumes);
-    shared::compute_solid_shadows(system, plain_volumes, cache, plain_movers);
+    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, memo, plain_volumes);
+    shared::compute_solid_shadows(system, plain_volumes, memo, plain_movers);
     check(plain_volumes.empty(), "a cutting light's volumes reaching no receiver are culled");
     check(plain_movers.empty(), "and nothing is solid");
 
@@ -316,8 +350,8 @@ int main()
     sun->orientation             = linalg::from_axis_angle({1.f, 0.f, 0.f}, -90.f);
     std::vector<shared::shadow_volume_t> sun_volumes;
     std::vector<shared::mover_t>         sun_movers;
-    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks,sun_volumes);
-    shared::compute_solid_shadows(system, sun_volumes, cache, sun_movers);
+    shared::compute_shadow_volumes(system, bvh, owner_of, {}, {}, {}, masks, memo, sun_volumes);
+    shared::compute_solid_shadows(system, sun_volumes, memo, sun_movers);
     bool sun_has_a_mover = false;
     for (const shared::mover_t& mover : sun_movers)
       if (mover.uid == sun_uid)

@@ -39,7 +39,7 @@ shadow_volume_report_t compute_predicted_world_at_tick(const game_session_t& ses
                                                        const predicted_world_settings_t& settings,
                                                        Span<const player_sight_t> sights,
                                                        solid_beam_cache_t& solid_beam_cache,
-                                                       solid_shadow_cache_t& solid_shadow_cache,
+                                                       shadow_memo_t& shadow_memo,
                                                        projector_mask_cache_t& projector_mask_cache,
                                                        predicted_world_storage_t& out)
 {
@@ -62,12 +62,12 @@ shadow_volume_report_t compute_predicted_world_at_tick(const game_session_t& ses
   lap.next("predicted world: shadow volumes");
   const shadow_volume_report_t report = compute_shadow_volumes(
       session.entity_system, session.bvh, session.owner_of, out.movers, out.player_shadow_casters,
-      session.mover_rests, projector_mask_cache, out.shadow_volumes);
+      session.mover_rests, projector_mask_cache, shadow_memo, out.shadow_volumes);
   lap.next("predicted world: solid beams");
   compute_solid_beams(session.entity_system, session.mover_rests, out.shadow_volumes, settings.beams_carved,
                       solid_beam_cache, out.movers);
   lap.next("predicted world: solid shadows");
-  compute_solid_shadows(session.entity_system, out.shadow_volumes, solid_shadow_cache, out.movers);
+  compute_solid_shadows(session.entity_system, out.shadow_volumes, shadow_memo, out.movers);
   return report;
 }
 

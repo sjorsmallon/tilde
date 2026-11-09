@@ -415,6 +415,19 @@ constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINITIONS =
                                  .lens_view  = {.filter = entities::Lens_Filter::Red}},
      .sounds                  = {.fire         = assets::NO_ASSET_NAME,
                                  .world_impact = assets::NO_ASSET_NAME}},
+    // Two bodies trade mouses: each keeps its owner's keys and its view is turned by the other's hand (shared/camera_swap.hpp).
+    {.weapon                  = entities::Weapon::Camera_Swapper,
+     .display_name            = "Camera Swapper",
+     .slot                    = entities::Inventory_Slot::Utility_2,
+     .fire_interval_seconds   = 1.f,
+     .deploy_duration_seconds = 0.f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 0.f,
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Hitscan,
+                                 .hitscan    = {.range = 10000.f, .leaves_bullet_impact = false},
+                                 .contact    = {.effect = contact_effect_t::Camera_Swap}},
+     .sounds                  = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
 }};
 
 // The one check, and it has to carry both failures.
@@ -503,6 +516,7 @@ constexpr bool contact_parameters_match_effect(const contact_t& contact)
   {
   case contact_effect_t::None:
   case contact_effect_t::Swap:
+  case contact_effect_t::Camera_Swap:
   case contact_effect_t::Land:
   case contact_effect_t::Leave_Zone:
     return damage_is_zero && magnet_is_zero && reel_is_zero && throw_is_zero && freeze_is_zero &&

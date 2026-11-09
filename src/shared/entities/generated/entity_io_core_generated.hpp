@@ -38,33 +38,34 @@ enum class entity_action : uint16_t
   Play = 3,   // Playable
   Stop_Playing = 4,   // Playable
   Set_Color = 5,   // Colorable
-  Add = 6,   // Counting
-  Reset = 7,   // Counting
-  Kill = 8,   // Mortal
-  Set_Health = 9,   // Mortal
-  Damage = 10,   // Mortal
-  Teleport = 11,   // Mobile
-  Set_Velocity = 12,   // Mobile
-  Add_Velocity = 13,   // Mobile
-  Grant_Weapon = 14,   // Armable
-  Take_Weapon = 15,   // Armable
-  Set_Respawn_Point = 16,   // Respawnable
-  Complete_Level = 17,   // Objective
-  Start = 18,   // Timer
-  Stop = 19,   // Timer
-  Restart = 20,   // Timer
-  Pause = 21,   // Timer
-  Resume = 22,   // Timer
-  Start_Match = 23,   // Match_Control
-  End_Round = 24,   // Match_Control
-  Restart_Round = 25,   // Match_Control
-  End_Match = 26,   // Match_Control
-  Reverse = 27,   // Path_Following
-  Go_To = 28,   // Path_Following
-  Fire = 29,   // Firing
+  Set_Character = 6,   // Typeable
+  Add = 7,   // Counting
+  Reset = 8,   // Counting
+  Kill = 9,   // Mortal
+  Set_Health = 10,   // Mortal
+  Damage = 11,   // Mortal
+  Teleport = 12,   // Mobile
+  Set_Velocity = 13,   // Mobile
+  Add_Velocity = 14,   // Mobile
+  Grant_Weapon = 15,   // Armable
+  Take_Weapon = 16,   // Armable
+  Set_Respawn_Point = 17,   // Respawnable
+  Complete_Level = 18,   // Objective
+  Start = 19,   // Timer
+  Stop = 20,   // Timer
+  Restart = 21,   // Timer
+  Pause = 22,   // Timer
+  Resume = 23,   // Timer
+  Start_Match = 24,   // Match_Control
+  End_Round = 25,   // Match_Control
+  Restart_Round = 26,   // Match_Control
+  End_Match = 27,   // Match_Control
+  Reverse = 28,   // Path_Following
+  Go_To = 29,   // Path_Following
+  Fire = 30,   // Firing
 };
 
-constexpr uint32_t ENTITY_ACTION_COUNT = 30;
+constexpr uint32_t ENTITY_ACTION_COUNT = 31;
 
 enum class entity_signal : uint16_t
 {
@@ -90,20 +91,21 @@ enum class entity_trait : uint16_t
   Switchable = 0,
   Playable = 1,
   Colorable = 2,
-  Counting = 3,
-  Touchable = 4,
-  Mortal = 5,
-  Mobile = 6,
-  Armable = 7,
-  Respawnable = 8,
-  Objective = 9,
-  Timer = 10,
-  Match_Control = 11,
-  Path_Following = 12,
-  Firing = 13,
+  Typeable = 3,
+  Counting = 4,
+  Touchable = 5,
+  Mortal = 6,
+  Mobile = 7,
+  Armable = 8,
+  Respawnable = 9,
+  Objective = 10,
+  Timer = 11,
+  Match_Control = 12,
+  Path_Following = 13,
+  Firing = 14,
 };
 
-constexpr uint32_t ENTITY_TRAIT_COUNT = 14;
+constexpr uint32_t ENTITY_TRAIT_COUNT = 15;
 
 const char* to_string(entity_action value);
 const char* to_string(entity_signal value);

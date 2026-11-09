@@ -34,6 +34,11 @@ struct drawn_mover_poses_t
 // Where our own feet are drawn: the prediction plus the error offset, carried by whatever we stand on.
 [[nodiscard]] vec3f drawn_local_feet(const client_context_t& ctx);
 
+// Where our own head points: the mouse, or while a camera swap hands our view to another mouse, the head
+// the server wrote as the snapshot holds it (shared/camera_swap.hpp). The mouse keeps writing
+// prediction.player_yaw underneath either way: that is the hand riding our input, turning the other body.
+[[nodiscard]] shared::View drawn_local_head(const client_context_t& ctx);
+
 // A passenger is inside their driver's body, and while we ride that body is the one our eye is in.
 [[nodiscard]] bool remote_player_is_hidden_by_a_merge(const client_context_t& ctx, const Remote_Player_State& remote_player);
 

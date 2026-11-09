@@ -45,10 +45,24 @@ inline constexpr uint32_t MAX_SHADOW_VOLUME_PLANES      = SHADOW_VOLUME_SIDE_SLO
 // How far past the caster a volume with no far cap is drawn (cl_shadow_volume_debug).
 inline constexpr float    SHADOW_VOLUME_DRAWN_REACH = 2048.f;
 
+inline constexpr uint32_t SHADOW_VOLUME_NOT_STATIC = UINT32_MAX;
+
 struct shadow_volume_edge_t
 {
   linalg::vec3f a;
   linalg::vec3f b;
+};
+
+// What a static piece does under a light, from its owner (resolve_piece_roles): a plain brush casts; Casts_From_Lens
+// is a thing in front of what the picture lands on; Receives (solid only in shadow) never casts; Erased receives and
+// casts from behind itself; Nothing is switched off.
+enum class piece_role_t : uint8_t
+{
+  Casts,
+  Casts_From_Lens,
+  Receives,
+  Erased,
+  Nothing
 };
 
 // Normals point OUT. A point is in shadow where it is inside every side plane (the pyramid the
@@ -81,9 +95,11 @@ struct shadow_volume_t
   // The caster is a THING in front of what the picture lands on (an owner marked casts_solid_from_lens, a mover,
   // a player), as against the room: the projected ball's dark is these volumes alone (projector_mask.hpp).
   bool                                          caster_casts_from_lens = false;
-  // Which piece cast it, in the collect's visiting order (static pieces, then every mover's): the solid shadow
-  // cache's key beside the light (solid_shadows.hpp); an owner uid cannot be, two unowned brushes share one.
-  uint32_t                                      caster_piece = 0;
+  // Where its solid piece is kept (solid_shadows.hpp): its index in its light's memo when a still caster threw it
+  // (the map's pieces, the dark on the glass), else SHADOW_VOLUME_NOT_STATIC and the moving memo of (light, caster,
+  // caster_piece_index), the piece's index within its mover or player.
+  uint32_t                                      static_index       = 0;
+  uint32_t                                      caster_piece_index = 0;
   // The caster's corners: the solid shadow's reach box is around them (solid_shadows.hpp).
   aabb_bounds_t                                 caster_bounds = {};
   // Where the rays come from, so the pyramid's edges can be followed back from the near ring.
@@ -112,10 +128,10 @@ struct shadow_light_t
   Array<Plane, 4> frame_planes;
   uint32_t        frame_plane_count = 0;
   // The frame's corners one unit along the axis (compute_projector_frame_corners: bottom-left, bottom-right,
-  // top-right, top-left) and what it shows: the picture's dark is cast as pieces on the glass
-  // (projector_mask.hpp). Missing is a plain white frame, casting nothing of its own.
+  // top-right, top-left) and the Projected_Image_Entity it shows, whose dark is cast as pieces on the glass
+  // (projector_mask.hpp). Null is a plain white frame, casting nothing of its own.
   Array<linalg::vec3f, 4> frame_corners_at_unit_distance;
-  assets::texture_asset   picture = assets::texture_asset::Missing;
+  entity_uid_t            image = null_entity_uid;
   // The light's cuts_geometry, carried onto every volume it throws.
   bool          cuts_geometry         = true;
   // The spot draws its beam (spot_beam_plan.md ss5) or is solid as one (solid_beams.hpp): its volumes are kept
@@ -244,27 +260,80 @@ struct shadow_volume_report_t
 [[nodiscard]] std::string describe_shadow_volume_report(const shadow_volume_report_t& report,
                                                         Span<const shadow_volume_t>   kept);
 
-// Every shadow light against every caster piece: every static piece in the BVH whose owner is
-// switched on and is not a receiver (a plain map brush has no owner and casts), and every piece of
-// every mover but a light's own (a solid beam, a solid shadow: light and dark cast no shadow), at the end-of-tick pose the movers were already cut at; a light that rides one is
-// read at the same pose. After the movers, every player's piece (`player_casters`), into the
-// solid_shadows lights alone: a player darkens no shadow platform.
-// A volume that touches no receiver's bounds is dropped unless its light draws
-// a beam the volume cuts: nothing else would read it, and the scene block holds few. After every piece, the
-// dark of each projector's picture casts as pieces on its glass, read from `projector_masks` and computed
-// into it on the first ask (projector_mask.hpp). The kept list is
-// ordered, stably, with the volumes that cut geometry and reach a receiver first: the renderer's cut draws
-// (reveal.glsl) read the first MAX_SCENE_SHADOW_VOLUMES, and a beam's own volumes must never push a hole or a
-// platform past that.
+// One light's STILL half: the volumes the map's pieces and the dark on its glass throw, kept with their report and,
+// for a solid_shadows light, each volume's solid piece, while the light, the owners' switches and the picture are what
+// they were built from. Movers and players are cast fresh every cut and never enter it, so nothing that moves can
+// cost a still light its work.
+struct shadow_light_memo_t
+{
+  entity_uid_t                                  light = null_entity_uid;
+  shadow_light_t                                built_for;
+  // The session's BVH is never written, so a different one is a different world (a test's, a rebuilt session's).
+  const Bounding_Volume_Hierarchy*              built_for_bvh = nullptr;
+  std::vector<piece_role_t>                     built_for_roles;
+  uint64_t                                      built_for_picture_hash = 0;
+  std::vector<shadow_volume_t>                  volumes;
+  std::vector<std::optional<collision_piece_t>> solid_pieces;
+  shadow_volume_report_t                        report;
+  uint64_t                                      last_used = 0;
+};
+
+// One mover's or player's piece under one light: its volume (none when refused or culled) and, for a solid_shadows
+// light, the volume's solid piece, kept while the light and the piece's planes are bit for bit what they were. A
+// platform that has stopped, a path segment, a lift at rest cost one compare per tick; a thing that moved misses.
+struct shadow_moving_memo_t
+{
+  entity_uid_t                     light       = null_entity_uid;
+  entity_uid_t                     owner       = null_entity_uid;
+  uint32_t                         piece_index = 0;
+  shadow_light_t                   built_for;
+  std::vector<Plane>               built_from_planes;
+  std::optional<shadow_volume_t>   volume;
+  std::optional<collision_piece_t> solid_piece;
+  shadow_volume_report_t           counts;
+  uint64_t                         last_used = 0;
+};
+
+// The memory of compute_shadow_volumes, one entry per light and per moving piece under it, each dropped when a tick
+// no longer has it. Lives in the session (game_session.hpp); every solid piece is built here, compute_solid_shadows
+// only reads them.
+struct shadow_memo_t
+{
+  std::vector<shadow_light_memo_t>  lights;
+  std::vector<shadow_moving_memo_t> moving;
+  // Which computation this is; an entry is stamped with it when used.
+  uint64_t                          generation = 0;
+  // How many light memos and moving entries were built rather than reused, over the memo's life: the pins.
+  uint64_t                          builds        = 0;
+  uint64_t                          moving_builds = 0;
+};
+
+// Every shadow light against every caster piece, in two halves. The STILL half per light, from `memo` when the
+// light, the piece roles and its picture are what the memo was built from and rebuilt into it otherwise: every
+// static piece in the BVH whose owner is switched on and is not a receiver (a plain map brush has no owner and
+// casts), then the dark of the projector's picture as pieces on its glass, read from `projector_masks` and
+// computed into it on the first ask (projector_mask.hpp). The MOVING half every cut: every piece of every mover
+// but a light's own (a solid beam, a solid shadow: light and dark cast no shadow), at the end-of-tick pose the
+// movers were already cut at (a light that rides one is read at the same pose), then every player's piece
+// (`player_casters`), into the solid_shadows lights alone: a player darkens no shadow platform.
+// A volume that touches no receiver's bounds is dropped unless its light draws a beam the volume cuts: nothing
+// else would read it, and the scene block holds few. The kept list is ordered, stably, with the volumes that cut
+// geometry and reach a receiver first: the renderer's cut draws (reveal.glsl) read the first
+// MAX_SCENE_SHADOW_VOLUMES, and a beam's own volumes must never push a hole or a platform past that.
 // APPENDS the volume's side polytope as lines (its silhouette pyramid cut by the beam's cone and its far
 // cap, exactly the planes collision reads), bounded `reach` past the caster where it is
 // open. The back planes are not drawn: they are the caster's own faces.
 void collect_shadow_volume_edges(const shadow_volume_t& volume, float reach, std::vector<shadow_volume_edge_t>& out);
 
+// Every switched-on light that cuts or is solid, as the cut sees it this tick: a riding light at its ridden pose, a
+// projector with the image it shows. What compute_shadow_volumes starts from; the bench times its parts.
+[[nodiscard]] std::vector<shadow_light_t> gather_shadow_lights(const Entity_System& system, Span<const mover_t> movers,
+                                                               const mover_rests_t& rests);
+
 shadow_volume_report_t compute_shadow_volumes(const Entity_System& system, const Bounding_Volume_Hierarchy& bvh,
                                               Span<const entity_uid_t> owner_of, Span<const mover_t> movers,
                                               Span<const player_shadow_caster_t> player_casters,
                                               const mover_rests_t& rests, projector_mask_cache_t& projector_masks,
-                                              std::vector<shadow_volume_t>& out);
+                                              shadow_memo_t& memo, std::vector<shadow_volume_t>& out);
 
 } // namespace shared

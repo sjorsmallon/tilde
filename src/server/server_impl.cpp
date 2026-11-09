@@ -649,7 +649,7 @@ void sv_shadow_volume_report(const command_context_t &)
   const shared::shadow_volume_report_t counts = shared::compute_shadow_volumes(
       context.world.session.entity_system, context.world.session.bvh, context.world.session.owner_of,
       storage.movers, storage.player_shadow_casters, context.world.session.mover_rests,
-      context.world.session.projector_mask_cache, storage.shadow_volumes);
+      context.world.session.projector_mask_cache, context.world.session.shadow_memo, storage.shadow_volumes);
   std::println("{}", shared::describe_shadow_volume_report(counts, storage.shadow_volumes));
 }
 

@@ -70,6 +70,9 @@ struct client_slot_t
   // and its release between two boundaries is a press this sees and a naive
   // compare of the two boundaries does not. See shared/subtick.hpp.
   uint64_t latest_buttons_bitmap    = 0;
+  // Where this client's MOUSE pointed when its last processed input ended: the view a body this
+  // client steers through a camera swap runs its steps under (shared/camera_swap.hpp).
+  shared::View latest_view = {};
   uint32_t held_snapshot_tick = 0;
 
   // This client holds the map we are running. DERIVED every tick from
@@ -281,8 +284,8 @@ struct server_context_t
   shared::posed_players_t rewind_scratch;
 
   // What a projected ball steps through this tick (projected_ball_system.cpp); only the capacity lives on.
-  std::vector<shared::projector_mask_rectangle_t> projected_ball_solids;
-  std::vector<bool>                               projected_ball_cells;
+  std::vector<shared::projector_mask_quad_t> projected_ball_solids;
+  std::vector<bool>                          projected_ball_cells;
 
   // A `map` console line, resolved but not yet serviced. Outside the reset
   // scope because the request outlives the world it was made in: it is a

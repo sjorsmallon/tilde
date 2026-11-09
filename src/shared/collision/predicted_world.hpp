@@ -174,7 +174,7 @@ shadow_volume_report_t compute_predicted_world_at_tick(const game_session_t& ses
                                                        const predicted_world_settings_t& settings,
                                                        Span<const player_sight_t> sights,
                                                        solid_beam_cache_t& solid_beam_cache,
-                                                       solid_shadow_cache_t& solid_shadow_cache,
+                                                       shadow_memo_t& shadow_memo,
                                                        projector_mask_cache_t& projector_mask_cache,
                                                        predicted_world_storage_t& out);
 

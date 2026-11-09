@@ -22,6 +22,7 @@
 #include "../../shared/collision/fixed_arc_flight.hpp"
 #include "../../shared/tween.hpp"
 #include "../../shared/collision/canopy.hpp"
+#include "../../shared/camera_swap.hpp"
 #include "../../shared/merge.hpp"
 #include "../../shared/collision/spawned_platforms.hpp"
 #include "../../shared/movement/movement_modifiers.hpp"
@@ -207,6 +208,24 @@ static bool local_player_drives_a_merged_body(const client_context_t &ctx)
   return my_player != nullptr &&
          shared::try_find_passenger_by_driver_uid(ctx.world.session.entity_system,
                                                   my_player->entity_id) != nullptr;
+}
+
+shared::View drawn_local_head(const client_context_t &ctx)
+{
+  const entities::Player_Entity* my_player = try_find_my_player(ctx);
+  if (my_player != nullptr && shared::player_view_is_steered_by_another(*my_player))
+    return {my_player->view_angle_yaw, my_player->view_angle_pitch};
+  return {ctx.prediction.player_yaw, ctx.prediction.player_pitch};
+}
+
+// A steered body's steps run under its head, not the mouse in the input, on both ends.
+static shared::subtick_step_t steered_step(const client_context_t &ctx, const shared::subtick_step_t &input_step)
+{
+  shared::subtick_step_t step = input_step;
+  const entities::Player_Entity* my_player = try_find_my_player(ctx);
+  if (my_player != nullptr && shared::player_view_is_steered_by_another(*my_player))
+    step.view = step.view_at_end = drawn_local_head(ctx);
+  return step;
 }
 
 // A passenger is inside their driver's body, and while we ride that body is the one our eye is in.
@@ -1026,7 +1045,7 @@ static void compute_predicted_world_for_input(
       }
 
   ctx.visuals.drawn_shadow_volume_report = shared::compute_predicted_world_at_tick(
-      session, settings, sights, ctx.world.session.solid_beam_cache, ctx.world.session.solid_shadow_cache,
+      session, settings, sights, ctx.world.session.solid_beam_cache, ctx.world.session.shadow_memo,
       ctx.world.session.projector_mask_cache, frame.predicted_world_storage);
   frame.predicted_world = get_predicted_world_for_own_player(ctx, frame);
 }
@@ -1354,8 +1373,9 @@ void Play_State::reconcile_with_server(client_context_t &ctx, play_frame_t &fram
       reconciled.move.feet =
           predict_mover_push(ctx, frame.predicted_world, reconciled.move.movement, reconciled.move.feet);
 
-      for (const shared::subtick_step_t& step : subtick_steps)
+      for (const shared::subtick_step_t& input_step : subtick_steps)
       {
+        const shared::subtick_step_t step = steered_step(ctx, input_step);
         (void)shared::apply_input_step_to_player(move_settings, ctx.world.session.bvh, frame.predicted_world,
                                                  restrictions, step, replay_previous_buttons,
                                                  predicted_step_start_time(ctx, replayed, step), prediction_dt,
@@ -1924,8 +1944,9 @@ void Play_State::predict_own_body_for_input(client_context_t &ctx, play_frame_t 
   const shared::subtick_steps_t      steps = shared::split_tick_input_into_subtick_steps(tick_input, tick_dt);
 
   uint64_t buttons_entering_step = tick_input.buttons_at_start;
-  for (const shared::subtick_step_t &step : steps)
+  for (const shared::subtick_step_t &input_step : steps)
   {
+    const shared::subtick_step_t       step    = steered_step(ctx, input_step);
     const shared::input_step_outcome_t outcome = shared::apply_input_step_to_player(
         move_settings, ctx.world.session.bvh, frame.predicted_world, restrictions, step, buttons_entering_step,
         predicted_step_start_time(ctx, input_number, step), tick_dt, state, &ctx.visuals.debug_collision_faces);
@@ -2203,7 +2224,7 @@ void Play_State::leave_afterimages_at_cuts(client_context_t &ctx, play_frame_t &
   };
 
   if (const entities::Player_Entity *my_player = try_find_my_player(ctx))
-    observe(*my_player, drawn_local_feet(ctx), ctx.prediction.player_yaw, ctx.prediction.player_pitch,
+    observe(*my_player, drawn_local_feet(ctx), drawn_local_head(ctx).yaw, drawn_local_head(ctx).pitch,
             my_player->body_yaw, !frame.free_camera_active && ctx.cvars->cl_spectate_slot < 0);
 
   for (const auto &[slot, remote_player] : ctx.replication.remote_players)
@@ -2244,8 +2265,8 @@ void Play_State::resolve_camera(client_context_t &ctx, play_frame_t &frame)
   // drives ctx.prediction.player_yaw underneath every arm -- it just isn't
   // always what the camera uses.
   camera.fov_degrees = frame.fov_degrees;
-  camera.yaw         = ctx.prediction.player_yaw;
-  camera.pitch       = ctx.prediction.player_pitch;
+  camera.yaw         = drawn_local_head(ctx).yaw;
+  camera.pitch       = drawn_local_head(ctx).pitch;
 
   camera.position = local_player_rides_a_rocket(ctx)
                         ? drawn_piloted_rocket(ctx)

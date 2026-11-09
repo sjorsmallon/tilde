@@ -49,6 +49,7 @@ constexpr const char* Weapon_VALUE_NAMES[] = {
   "Eraser",
   "Merge",
   "Red_Lens",
+  "Camera_Swapper",
 };
 
 constexpr const char* Fire_Resolution_VALUE_NAMES[] = {
@@ -102,6 +103,18 @@ constexpr const char* Toucher_Filter_VALUE_NAMES[] = {
   "Anything",
   "Players",
   "Projected_Balls",
+};
+
+constexpr const char* Image_Row_VALUE_NAMES[] = {
+  "Row_0",
+  "Row_1",
+  "Row_2",
+  "Row_3",
+  "Row_4",
+  "Row_5",
+  "Row_6",
+  "Row_7",
+  "Row_8",
 };
 
 constexpr const char* Solid_Shadows_VALUE_NAMES[] = {
@@ -182,7 +195,7 @@ constexpr const char* Movement_Override_VALUE_NAMES[] = {
 constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Spawn_Type", {Spawn_Type_VALUE_NAMES, 2}},
   {"Team_Allegiance", {Team_Allegiance_VALUE_NAMES, 3}},
-  {"Weapon", {Weapon_VALUE_NAMES, 23}},
+  {"Weapon", {Weapon_VALUE_NAMES, 24}},
   {"Fire_Resolution", {Fire_Resolution_VALUE_NAMES, 13}},
   {"Fire_Trigger", {Fire_Trigger_VALUE_NAMES, 2}},
   {"Inventory_Slot", {Inventory_Slot_VALUE_NAMES, 5}},
@@ -190,6 +203,7 @@ constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Hit_Region", {Hit_Region_VALUE_NAMES, 3}},
   {"Light_Mode", {Light_Mode_VALUE_NAMES, 3}},
   {"Toucher_Filter", {Toucher_Filter_VALUE_NAMES, 3}},
+  {"Image_Row", {Image_Row_VALUE_NAMES, 9}},
   {"Solid_Shadows", {Solid_Shadows_VALUE_NAMES, 3}},
   {"Aim_Pose", {Aim_Pose_VALUE_NAMES, 5}},
   {"Round_Phase", {Round_Phase_VALUE_NAMES, 6}},
@@ -556,7 +570,7 @@ constexpr field_info_t Light_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[10]},
+   .enum_info = &ENUM_INFOS[11]},
 };
 
 constexpr field_info_t Movement_FIELDS[] = {
@@ -658,7 +672,7 @@ constexpr field_info_t Movement_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[19]},
+   .enum_info = &ENUM_INFOS[20]},
   {.name = "override_target_uid",
    .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Movement, override_target_uid),
@@ -829,7 +843,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[13]},
+   .enum_info = &ENUM_INFOS[14]},
   {.name = "phase",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Match, phase),
@@ -838,7 +852,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[12]},
+   .enum_info = &ENUM_INFOS[13]},
   {.name = "phase_start_tick",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Match, phase_start_tick),
@@ -874,7 +888,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[14]},
+   .enum_info = &ENUM_INFOS[15]},
   {.name = "winning_team",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Match, winning_team),
@@ -910,7 +924,7 @@ constexpr field_info_t Match_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[15]},
+   .enum_info = &ENUM_INFOS[16]},
 };
 
 constexpr field_info_t Path_Follow_FIELDS[] = {
@@ -1137,6 +1151,15 @@ constexpr field_info_t Player_Entity_FIELDS[] = {
    .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(Player_Entity, view_aspect),
    .size_in_bytes = (uint32_t)sizeof(Player_Entity::view_aspect),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "view_steered_by_uid",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Player_Entity, view_steered_by_uid),
+   .size_in_bytes = (uint32_t)sizeof(Player_Entity::view_steered_by_uid),
    .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -3262,7 +3285,7 @@ constexpr field_info_t Geometry_Owner_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[18]},
+   .enum_info = &ENUM_INFOS[19]},
   {.name = "solid_only_when_lensed",
    .type = FIELD_TYPE_BOOL,
    .offset = (uint32_t)offsetof(Geometry_Owner_Entity, solid_only_when_lensed),
@@ -3487,7 +3510,7 @@ constexpr field_info_t Path_Node_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[16]},
+   .enum_info = &ENUM_INFOS[17]},
 };
 
 constexpr field_info_t Mover_Entity_FIELDS[] = {
@@ -4288,7 +4311,7 @@ constexpr field_info_t Reveal_Light_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[17]},
+   .enum_info = &ENUM_INFOS[18]},
   {.name = "range",
    .type = FIELD_TYPE_F32,
    .offset = (uint32_t)offsetof(Reveal_Light_Entity, range),
@@ -4474,7 +4497,7 @@ constexpr field_info_t Lens_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[18]},
+   .enum_info = &ENUM_INFOS[19]},
   {.name = "render",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Lens_Entity, render),
@@ -4576,15 +4599,6 @@ constexpr field_info_t Projector_Entity_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
-  {.name = "texture",
-   .type = FIELD_TYPE_ASSET,
-   .offset = (uint32_t)offsetof(Projector_Entity, texture),
-   .size_in_bytes = (uint32_t)sizeof(Projector_Entity::texture),
-   .flags = 2u,
-   .component_id = NOT_A_COMPONENT,
-   .string_capacity = NOT_A_STRING,
-   .asset_class_id = (int32_t)assets::asset_class_t::texture_asset,
    .enum_info = NOT_AN_ENUM},
 };
 
@@ -4699,6 +4713,144 @@ constexpr field_info_t Projected_Ball_Entity_FIELDS[] = {
    .enum_info = NOT_AN_ENUM},
 };
 
+constexpr field_info_t Projected_Image_Entity_FIELDS[] = {
+  {.name = "entity_id",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Projected_Image_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Image_Entity::entity_id),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "position",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Projected_Image_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Image_Entity::position),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "orientation",
+   .type = FIELD_TYPE_QUAT,
+   .offset = (uint32_t)offsetof(Projected_Image_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Image_Entity::orientation),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "name",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)offsetof(Projected_Image_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Image_Entity::name),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "projector",
+   .type = FIELD_TYPE_ENTITY_UID,
+   .offset = (uint32_t)offsetof(Projected_Image_Entity, projector),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Image_Entity::projector),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "texture",
+   .type = FIELD_TYPE_ASSET,
+   .offset = (uint32_t)offsetof(Projected_Image_Entity, texture),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Image_Entity::texture),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = (int32_t)assets::asset_class_t::texture_asset,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "text.Row_0",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)(offsetof(Projected_Image_Entity, text) + 0 * sizeof(Projected_Image_Entity::text.values[0])),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Image_Entity::text.values[0]),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "text.Row_1",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)(offsetof(Projected_Image_Entity, text) + 1 * sizeof(Projected_Image_Entity::text.values[0])),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Image_Entity::text.values[0]),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "text.Row_2",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)(offsetof(Projected_Image_Entity, text) + 2 * sizeof(Projected_Image_Entity::text.values[0])),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Image_Entity::text.values[0]),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "text.Row_3",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)(offsetof(Projected_Image_Entity, text) + 3 * sizeof(Projected_Image_Entity::text.values[0])),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Image_Entity::text.values[0]),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "text.Row_4",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)(offsetof(Projected_Image_Entity, text) + 4 * sizeof(Projected_Image_Entity::text.values[0])),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Image_Entity::text.values[0]),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "text.Row_5",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)(offsetof(Projected_Image_Entity, text) + 5 * sizeof(Projected_Image_Entity::text.values[0])),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Image_Entity::text.values[0]),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "text.Row_6",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)(offsetof(Projected_Image_Entity, text) + 6 * sizeof(Projected_Image_Entity::text.values[0])),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Image_Entity::text.values[0]),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "text.Row_7",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)(offsetof(Projected_Image_Entity, text) + 7 * sizeof(Projected_Image_Entity::text.values[0])),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Image_Entity::text.values[0]),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+  {.name = "text.Row_8",
+   .type = FIELD_TYPE_STRING,
+   .offset = (uint32_t)(offsetof(Projected_Image_Entity, text) + 8 * sizeof(Projected_Image_Entity::text.values[0])),
+   .size_in_bytes = (uint32_t)sizeof(Projected_Image_Entity::text.values[0]),
+   .flags = 3u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = 32,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM},
+};
+
 constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Box_Volume", {Box_Volume_FIELDS, 2}, (uint32_t)sizeof(Box_Volume)},
   {"Enabled", {Enabled_FIELDS, 1}, (uint32_t)sizeof(Enabled)},
@@ -4757,6 +4909,7 @@ Entity* construct_Fog_Volume_Entity(void* memory) { return new (memory) Fog_Volu
 Entity* construct_Lens_Entity(void* memory) { return new (memory) Lens_Entity(); }
 Entity* construct_Projector_Entity(void* memory) { return new (memory) Projector_Entity(); }
 Entity* construct_Projected_Ball_Entity(void* memory) { return new (memory) Projected_Ball_Entity(); }
+Entity* construct_Projected_Image_Entity(void* memory) { return new (memory) Projected_Image_Entity(); }
 
 Entity* as_base_Player_Spawn_Entity(void* memory) { return static_cast<Entity*>((Player_Spawn_Entity*)memory); }
 Entity* as_base_Player_Spectate_Entity(void* memory) { return static_cast<Entity*>((Player_Spectate_Entity*)memory); }
@@ -4797,12 +4950,13 @@ Entity* as_base_Fog_Volume_Entity(void* memory) { return static_cast<Entity*>((F
 Entity* as_base_Lens_Entity(void* memory) { return static_cast<Entity*>((Lens_Entity*)memory); }
 Entity* as_base_Projector_Entity(void* memory) { return static_cast<Entity*>((Projector_Entity*)memory); }
 Entity* as_base_Projected_Ball_Entity(void* memory) { return static_cast<Entity*>((Projected_Ball_Entity*)memory); }
+Entity* as_base_Projected_Image_Entity(void* memory) { return static_cast<Entity*>((Projected_Image_Entity*)memory); }
 
 constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"", "", {}, 0, 0, 0, false, false, false, nullptr, nullptr}, // Invalid
   {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 6}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, false, false, construct_Player_Spawn_Entity, as_base_Player_Spawn_Entity},
   {"player_spectate_entity", "Player Spectate", {Player_Spectate_Entity_FIELDS, 4}, (uint32_t)sizeof(Player_Spectate_Entity), (uint32_t)alignof(Player_Spectate_Entity), 0u, false, false, false, construct_Player_Spectate_Entity, as_base_Player_Spectate_Entity},
-  {"player_entity", "Player", {Player_Entity_FIELDS, 33}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 3392u, true, true, true, construct_Player_Entity, as_base_Player_Entity},
+  {"player_entity", "Player", {Player_Entity_FIELDS, 34}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 3392u, true, true, true, construct_Player_Entity, as_base_Player_Entity},
   {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 16}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 289u, false, true, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"shot_entity", "Shot", {Shot_Entity_FIELDS, 7}, (uint32_t)sizeof(Shot_Entity), (uint32_t)alignof(Shot_Entity), 264u, true, true, false, construct_Shot_Entity, as_base_Shot_Entity},
   {"platform_entity", "Platform", {Platform_Entity_FIELDS, 11}, (uint32_t)sizeof(Platform_Entity), (uint32_t)alignof(Platform_Entity), 280u, true, true, true, construct_Platform_Entity, as_base_Platform_Entity},
@@ -4837,8 +4991,9 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"reveal_light_entity", "Reveal Light", {Reveal_Light_Entity_FIELDS, 11}, (uint32_t)sizeof(Reveal_Light_Entity), (uint32_t)alignof(Reveal_Light_Entity), 32770u, false, true, false, construct_Reveal_Light_Entity, as_base_Reveal_Light_Entity},
   {"fog_volume_entity", "Fog Volume", {Fog_Volume_Entity_FIELDS, 9}, (uint32_t)sizeof(Fog_Volume_Entity), (uint32_t)alignof(Fog_Volume_Entity), 3u, false, true, false, construct_Fog_Volume_Entity, as_base_Fog_Volume_Entity},
   {"lens_entity", "Lens", {Lens_Entity_FIELDS, 8}, (uint32_t)sizeof(Lens_Entity), (uint32_t)alignof(Lens_Entity), 259u, false, true, true, construct_Lens_Entity, as_base_Lens_Entity},
-  {"projector_entity", "Projector", {Projector_Entity_FIELDS, 11}, (uint32_t)sizeof(Projector_Entity), (uint32_t)alignof(Projector_Entity), 33282u, false, true, true, construct_Projector_Entity, as_base_Projector_Entity},
+  {"projector_entity", "Projector", {Projector_Entity_FIELDS, 10}, (uint32_t)sizeof(Projector_Entity), (uint32_t)alignof(Projector_Entity), 33282u, false, true, true, construct_Projector_Entity, as_base_Projector_Entity},
   {"projected_ball_entity", "Projected Ball", {Projected_Ball_Entity_FIELDS, 12}, (uint32_t)sizeof(Projected_Ball_Entity), (uint32_t)alignof(Projected_Ball_Entity), 0u, false, true, false, construct_Projected_Ball_Entity, as_base_Projected_Ball_Entity},
+  {"projected_image_entity", "Projected Image", {Projected_Image_Entity_FIELDS, 15}, (uint32_t)sizeof(Projected_Image_Entity), (uint32_t)alignof(Projected_Image_Entity), 0u, false, true, false, construct_Projected_Image_Entity, as_base_Projected_Image_Entity},
 };
 
 constexpr int32_t COMPONENT_OFFSETS[][16] = {
@@ -4882,9 +5037,10 @@ constexpr int32_t COMPONENT_OFFSETS[][16] = {
   {(int32_t)offsetof(Lens_Entity, volume), (int32_t)offsetof(Lens_Entity, switch_state), -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Lens_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Lens_Entity
   {-1, (int32_t)offsetof(Projector_Entity, switch_state), -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Projector_Entity, light), -1, -1, -1, -1, -1, (int32_t)offsetof(Projector_Entity, rides)}, // Projector_Entity
   {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Projected_Ball_Entity
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // Projected_Image_Entity
 };
 
-constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 27;
+constexpr uint32_t PLACEABLE_ENTITY_TYPE_COUNT = 28;
 constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Player_Spawn_Entity,
   entity_type::Player_Spectate_Entity,
@@ -4913,9 +5069,10 @@ constexpr entity_type PLACEABLE_ENTITY_TYPES[] = {
   entity_type::Lens_Entity,
   entity_type::Projector_Entity,
   entity_type::Projected_Ball_Entity,
+  entity_type::Projected_Image_Entity,
 };
 
-constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 33;
+constexpr uint32_t REPLICATED_ENTITY_TYPE_COUNT = 34;
 constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Player_Entity,
   entity_type::Weapon_Entity,
@@ -4950,6 +5107,7 @@ constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Lens_Entity,
   entity_type::Projector_Entity,
   entity_type::Projected_Ball_Entity,
+  entity_type::Projected_Image_Entity,
 };
 
 } // namespace
@@ -5019,6 +5177,7 @@ const char* to_string(Weapon value)
     case Weapon::Eraser: return "Eraser";
     case Weapon::Merge: return "Merge";
     case Weapon::Red_Lens: return "Red_Lens";
+    case Weapon::Camera_Swapper: return "Camera_Swapper";
   }
   assert(false && "invalid Weapon");
   return "";
@@ -5049,6 +5208,7 @@ template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text)
   if (text == "Eraser") return Weapon::Eraser;
   if (text == "Merge") return Weapon::Merge;
   if (text == "Red_Lens") return Weapon::Red_Lens;
+  if (text == "Camera_Swapper") return Weapon::Camera_Swapper;
   return std::nullopt;
 }
 
@@ -5211,6 +5371,38 @@ template <> std::optional<Toucher_Filter> try_from_string<Toucher_Filter>(std::s
   if (text == "Anything") return Toucher_Filter::Anything;
   if (text == "Players") return Toucher_Filter::Players;
   if (text == "Projected_Balls") return Toucher_Filter::Projected_Balls;
+  return std::nullopt;
+}
+
+const char* to_string(Image_Row value)
+{
+  switch (value)
+  {
+    case Image_Row::Row_0: return "Row_0";
+    case Image_Row::Row_1: return "Row_1";
+    case Image_Row::Row_2: return "Row_2";
+    case Image_Row::Row_3: return "Row_3";
+    case Image_Row::Row_4: return "Row_4";
+    case Image_Row::Row_5: return "Row_5";
+    case Image_Row::Row_6: return "Row_6";
+    case Image_Row::Row_7: return "Row_7";
+    case Image_Row::Row_8: return "Row_8";
+  }
+  assert(false && "invalid Image_Row");
+  return "";
+}
+
+template <> std::optional<Image_Row> try_from_string<Image_Row>(std::string_view text)
+{
+  if (text == "Row_0") return Image_Row::Row_0;
+  if (text == "Row_1") return Image_Row::Row_1;
+  if (text == "Row_2") return Image_Row::Row_2;
+  if (text == "Row_3") return Image_Row::Row_3;
+  if (text == "Row_4") return Image_Row::Row_4;
+  if (text == "Row_5") return Image_Row::Row_5;
+  if (text == "Row_6") return Image_Row::Row_6;
+  if (text == "Row_7") return Image_Row::Row_7;
+  if (text == "Row_8") return Image_Row::Row_8;
   return std::nullopt;
 }
 
@@ -5528,6 +5720,7 @@ Entity* create_entity(entity_type type)
     case entity_type::Lens_Entity: return new Lens_Entity();
     case entity_type::Projector_Entity: return new Projector_Entity();
     case entity_type::Projected_Ball_Entity: return new Projected_Ball_Entity();
+    case entity_type::Projected_Image_Entity: return new Projected_Image_Entity();
   }
   assert(false && "create_entity: not a valid entity_type");
   return nullptr;
@@ -5588,6 +5781,7 @@ void destroy_entity(Entity* entity)
     case entity_type::Lens_Entity: delete static_cast<Lens_Entity*>(entity); return;
     case entity_type::Projector_Entity: delete static_cast<Projector_Entity*>(entity); return;
     case entity_type::Projected_Ball_Entity: delete static_cast<Projected_Ball_Entity*>(entity); return;
+    case entity_type::Projected_Image_Entity: delete static_cast<Projected_Image_Entity*>(entity); return;
   }
   assert(false && "destroy_entity: entity carries an invalid tag");
 }
@@ -5602,6 +5796,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xaf8cd138u;
+const uint32_t SCHEMA_HASH = 0xd8cd6064u;
 
 } // namespace entities

@@ -880,6 +880,7 @@ Client_Commands :: commands {
     // mem_report answers "what allocates in this game"; this answers "what
     // happened in frame 8412", which is the question a hitch actually poses.
     // Needs -DTILDE_MEMORY_AUDIT=ON, since the per-site deltas come from there.
+    // Prints the worst frame's zones first, which needs no audit. frame_reset clears the worst frame too.
     hitch_report(top: i32 = 15)            @Client  "What the worst frame allocated, by call site"
 
     // Every zone's time DISTRIBUTION over every measured frame, which is what

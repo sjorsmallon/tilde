@@ -15,6 +15,11 @@
 #include <optional>
 #include <vector>
 
+namespace entities
+{
+struct Projected_Image_Entity;
+}
+
 namespace shared
 {
 
@@ -90,8 +95,10 @@ struct scene_light_t
   // axis; its width is `aspect` times its height.
   float        cos_outer = 0.f;
   float        aspect    = 1.f;
-  // What a projector's frame shows; Missing is a plain white frame. No other kind carries one.
-  assets::texture_asset picture = assets::texture_asset::Missing;
+  // The Projected_Image_Entity a projector shows, for the drawn picture (projected_image.hpp), alive for the
+  // frame; null is a plain white frame. No other kind carries one, and the fold does not fill it:
+  // add_frame_light's caller does.
+  const entities::Projected_Image_Entity* image = nullptr;
 
   // The emitter's RADIUS: world units for a point or a spot, and for a
   // DIRECTIONAL light the tangent of half its angular diameter, which is the
@@ -344,9 +351,12 @@ void begin_frame_lights(frame_lights_t &frame, const lightmap_t &lightmap);
 //
 // The uid is a PARAMETER because its two callers spell it differently -- a
 // session entity carries it as `entity_id`, a map entry as `map_entity_t::uid`
-// -- and it is what the bake's resolve table is keyed by.
+// -- and it is what the bake's resolve table is keyed by. `image` is
+// find_projected_image_for_projector's answer for a projector (a session's or a
+// map's) and null for every other light; the fold has no entity system to ask.
 void add_frame_light(frame_lights_t &frame, const lightmap_t &lightmap,
-                     entity_uid_t uid, const entities::Entity &entity, const path_pose_t &pose);
+                     entity_uid_t uid, const entities::Entity &entity, const path_pose_t &pose,
+                     const entities::Projected_Image_Entity *image);
 
 // A Dynamic light no entity holds and no bake saw (a Flashlight's beam): the tail alone. After begin_frame_lights.
 void add_dynamic_frame_light(frame_lights_t &frame, const scene_light_t &light);

@@ -10,6 +10,7 @@
 #include "../../shared/assets/asset.hpp"
 #include "../../shared/collision/debug_collision.hpp"
 #include "../../shared/lighting/map_baker.hpp"
+#include "../../shared/lighting/projected_image.hpp"
 #include "../editor/editor_bvh.hpp"
 #include "../editor/editor_object_bounds.hpp"
 #include "../../shared/map/map_group.hpp"
@@ -1604,7 +1605,8 @@ void Tool_Editor_State::draw(float delta_seconds,
       // The editor lays the frame's lights out exactly as the game does, which
       // is what makes a bake previewed here the bake that ships.
       const shared::path_pose_t light_pose = shared::get_placed_pose_for_entity(*entry.entity);
-      shared::add_frame_light(scene.lights, map.lightmap, entry.uid, *entry.entity, light_pose);
+      shared::add_frame_light(scene.lights, map.lightmap, entry.uid, *entry.entity, light_pose,
+                              shared::find_projected_image_for_projector(map, entry.uid));
       if (state_manager::get_client_context().cvars->r_beam)
         if (const entities::Spot_Light_Entity* spot =
                 entities::entity_as<entities::Spot_Light_Entity>(entry.entity.get());

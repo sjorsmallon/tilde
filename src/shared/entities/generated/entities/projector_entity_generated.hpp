@@ -25,7 +25,6 @@ struct Projector_Entity : Entity
   float range;
   float half_angle_degrees;
   float aspect;
-  assets::texture_asset texture;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

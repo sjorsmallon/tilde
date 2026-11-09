@@ -1,4 +1,6 @@
 #include "../shared/lighting/environment_brdf.hpp"
+#include "../shared/lighting/projected_image.hpp"
+#include "../shared/entities/generated/entities/projected_image_entity_generated.hpp"
 #include "../shared/dither3d_pattern.hpp"
 #include "../shared/frame_timing.hpp"
 #include "renderer.hpp"
@@ -996,6 +998,8 @@ static uint32_t              g_projector_shadow_requested_layer_count = 0;
 constexpr VkFormat PROJECTOR_PICTURE_FORMAT = VK_FORMAT_R8G8B8A8_SRGB;
 constexpr uint32_t PROJECTOR_PICTURE_HOLDS_NOTHING = 0;
 constexpr uint32_t PROJECTOR_PICTURE_HOLDS_WHITE   = 1;
+constexpr uint64_t PROJECTOR_PICTURE_HOLDS_TEXT_BIT = uint64_t{1} << 63;
+constexpr uint32_t PROJECTOR_PICTURE_CELL_COUNT     = shared::PROJECTED_IMAGE_COLUMNS * shared::PROJECTED_IMAGE_ROWS;
 struct projector_pictures_t
 {
   VkImage        image   = VK_NULL_HANDLE;
@@ -1004,8 +1008,11 @@ struct projector_pictures_t
   VkSampler      sampler     = VK_NULL_HANDLE;
   uint32_t       size        = 0;
   uint32_t       layer_count = 0;
-  // Per layer: HOLDS_NOTHING, HOLDS_WHITE (a projector with no texture), or the texture asset's index + 2.
-  Array<uint32_t, MAX_SHADOW_LAYERS> held;
+  // Per layer: HOLDS_NOTHING, HOLDS_WHITE (a projector with no image), the texture asset's index + 2 for an
+  // image with no text, or under HOLDS_TEXT_BIT the texture's index and the frame's aspect bits, with the text
+  // the layer's cells were composed from beside it.
+  Array<uint64_t, MAX_SHADOW_LAYERS>                                       held;
+  Array<Array<char, PROJECTOR_PICTURE_CELL_COUNT>, MAX_SHADOW_LAYERS> held_text;
 };
 static projector_pictures_t g_projector_pictures;
 static VkRenderPass          g_shadow_render_pass           = VK_NULL_HANDLE;
@@ -6187,20 +6194,40 @@ static void create_projector_pictures(uint32_t size, uint32_t layer_count)
     fatal_error("[renderer] could not create the projector picture sampler");
 }
 
-// Puts what a projector shows into the layer its shadow map was assigned, if it is not there already: the
-// texture blitted to the layer's size, or white for a projector with no texture. Through the upload batch,
-// which is submitted ahead of the frame.
-static void ensure_projector_picture_in_layer(uint32_t layer, assets::texture_asset picture)
+// Puts what a projector shows into the layer its shadow map was assigned, if it is not there already: its
+// image's text composed over its texture, the texture alone blitted to the layer's size, or white for a
+// projector with no image. Through the upload batch, which is submitted ahead of the frame.
+static void ensure_projector_picture_in_layer(uint32_t layer, const entities::Projected_Image_Entity *image,
+                                              float aspect)
 {
   projector_pictures_t &pictures = g_projector_pictures;
   if (layer >= pictures.layer_count)
     fatal_error("[renderer] projector picture layer {} past the {}-layer array", layer, pictures.layer_count);
 
-  const assets::asset_handle_t<assets::texture_asset_t> asset = assets::get_texture(picture);
+  const bool                  has_text = image != nullptr && shared::projected_image_has_text(*image);
+  const assets::texture_asset texture  = image != nullptr ? image->texture : assets::texture_asset::Missing;
+  const assets::asset_handle_t<assets::texture_asset_t> asset = assets::get_texture(texture);
   const texture_handle_t handle = asset.valid() ? register_texture_asset(asset, /*srgb*/ true) : texture_handle_t{};
   const assets::texture_asset_t *source = handle.valid() ? assets::get(asset) : nullptr;
-  const uint32_t wanted = source != nullptr ? asset.index + 2 : PROJECTOR_PICTURE_HOLDS_WHITE;
-  if (pictures.held[layer] == wanted)
+  const uint64_t wanted = has_text ? (PROJECTOR_PICTURE_HOLDS_TEXT_BIT | ((uint64_t)std::bit_cast<uint32_t>(aspect) << 32) |
+                                      (uint64_t)asset.index)
+                          : source != nullptr ? asset.index + 2
+                                              : PROJECTOR_PICTURE_HOLDS_WHITE;
+
+  // With text, the layer is composed cell by cell on the CPU and a keystroke recomposes the cells whose
+  // character changed; the whole grid only when the texture, the aspect or what the layer held changes.
+  Array<char, PROJECTOR_PICTURE_CELL_COUNT> characters;
+  bool                                      whole_grid = pictures.held[layer] != wanted;
+  if (has_text)
+  {
+    for (uint32_t row = 0; row < shared::PROJECTED_IMAGE_ROWS; ++row)
+      for (uint32_t column = 0; column < shared::PROJECTED_IMAGE_COLUMNS; ++column)
+        characters[row * shared::PROJECTED_IMAGE_COLUMNS + column] =
+            shared::projected_image_character_at(*image, column, row);
+    if (!whole_grid && memcmp(characters.data, pictures.held_text[layer].data, sizeof(characters.data)) == 0)
+      return;
+  }
+  else if (!whole_grid)
     return;
   pictures.held[layer] = wanted;
 
@@ -6208,7 +6235,47 @@ static void ensure_projector_picture_in_layer(uint32_t layer, assets::texture_as
   const VkImageSubresourceRange layer_range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, layer, 1};
   move_image_range_to_layout(cmd, pictures.image, layer_range, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-  if (source == nullptr)
+  if (has_text)
+  {
+    std::vector<uint8_t>           pixels;
+    std::vector<VkBufferImageCopy> regions;
+    for (uint32_t row = 0; row < shared::PROJECTED_IMAGE_ROWS; ++row)
+      for (uint32_t column = 0; column < shared::PROJECTED_IMAGE_COLUMNS; ++column)
+      {
+        const uint32_t cell = row * shared::PROJECTED_IMAGE_COLUMNS + column;
+        if (!whole_grid && characters[cell] == pictures.held_text[layer][cell])
+          continue;
+        const shared::projected_image_cell_pixels_t where =
+            shared::compute_projected_image_cell_pixels(column, row, pictures.size, pictures.size);
+        const assets::texture_asset_t composed =
+            shared::compose_projected_image_cell(*image, column, row, pictures.size, pictures.size, aspect);
+        VkBufferImageCopy region{};
+        region.bufferOffset     = (VkDeviceSize)pixels.size();
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, 1};
+        region.imageOffset      = {(int32_t)where.x, (int32_t)where.y, 0};
+        region.imageExtent      = {where.width, where.height, 1};
+        regions.push_back(region);
+        pixels.insert(pixels.end(), composed.pixels.begin(), composed.pixels.end());
+      }
+    pictures.held_text[layer] = characters;
+    if (whole_grid)
+      log_terminal("[renderer] projector picture layer {} composed whole: {} cells, {} bytes", layer, regions.size(),
+                   pixels.size());
+
+    const VkDeviceSize bytes = (VkDeviceSize)pixels.size();
+    VkBuffer           staging;
+    VkDeviceMemory     staging_memory;
+    create_buffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging, staging_memory);
+    void *mapped = nullptr;
+    vkMapMemory(g_device, staging_memory, 0, bytes, 0, &mapped);
+    memcpy(mapped, pixels.data(), (size_t)bytes);
+    vkUnmapMemory(g_device, staging_memory);
+    vkCmdCopyBufferToImage(cmd, staging, pictures.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           (uint32_t)regions.size(), regions.data());
+    free_after_upload(staging, staging_memory);
+  }
+  else if (source == nullptr)
   {
     const VkClearColorValue white{{1.0f, 1.0f, 1.0f, 1.0f}};
     vkCmdClearColorImage(cmd, pictures.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &white, 1, &layer_range);
@@ -8105,7 +8172,7 @@ static void assign_shadow_layers(const view_pass_t &pass, const shadow_settings_
       prepared.jobs[prepared.job_count++] = {layer, light.mode, projection.view_projection,
                                              /*draws_nothing*/ is_projector && !light.casts_shadows};
       if (is_projector)
-        ensure_projector_picture_in_layer(pool_layer, light.picture);
+        ensure_projector_picture_in_layer(pool_layer, light.image, light.aspect);
     }
 
     scene.lights[candidate.index].radiance[3] = (float)first_layer;

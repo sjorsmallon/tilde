@@ -187,9 +187,9 @@ static void test_every_predicted_type_feeds_exactly_one_collect()
   shared::compute_solid_beams(system, {}, {}, shared::beam_carve_scope_t::Solid, solid_beam_cache, movers);
   std::vector<shared::shadow_volume_t> shadow_volumes;
   shared::projector_mask_cache_t       projector_masks;
-  shared::compute_shadow_volumes(system, crate_bvh, crate_owner_of, movers, {}, {}, projector_masks, shadow_volumes);
-  shared::solid_shadow_cache_t solid_shadow_cache;
-  shared::compute_solid_shadows(system, shadow_volumes, solid_shadow_cache, movers);
+  shared::shadow_memo_t                memo;
+  shared::compute_shadow_volumes(system, crate_bvh, crate_owner_of, movers, {}, {}, projector_masks, memo, shadow_volumes);
+  shared::compute_solid_shadows(system, shadow_volumes, memo, movers);
   std::set<entities::entity_type> types_that_produced_a_mover;
   for (const shared::mover_t& mover : movers)
   {

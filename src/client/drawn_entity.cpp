@@ -156,6 +156,7 @@ std::optional<drawn_entity_t> try_compute_drawn_entity_at_tick(const client_cont
   case entity_type::Reveal_Light_Entity:
   case entity_type::Fog_Volume_Entity:
   case entity_type::Projected_Ball_Entity:
+  case entity_type::Projected_Image_Entity:
     return out;
 
   // Drawn by the remote-player pass through the interpolation ring, never here.

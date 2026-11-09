@@ -9,6 +9,7 @@
 #include "map/map_geometry.hpp"
 #include "map/mesh/mesh.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <optional>
@@ -18,7 +19,14 @@ using linalg::vec2f;
 using linalg::vec3f;
 using shared::projected_ball_settings_t;
 using shared::projected_ball_t;
-using shared::projector_mask_rectangle_t;
+using shared::make_projector_mask_quad;
+using shared::projector_mask_quad_t;
+
+// An axis-aligned quad's edges, as make_projector_mask_quad lays its corners.
+static float u0(const projector_mask_quad_t& quad) { return quad.corners[0].u; }
+static float v0(const projector_mask_quad_t& quad) { return quad.corners[0].v; }
+static float u1(const projector_mask_quad_t& quad) { return quad.corners[2].u; }
+static float v1(const projector_mask_quad_t& quad) { return quad.corners[2].v; }
 
 static int failure_count = 0;
 
@@ -39,14 +47,14 @@ static constexpr float TICK = 1.f / 64.f;
 static constexpr projected_ball_settings_t SETTINGS{.radius = 0.03f, .gravity = 2.f, .restitution = 0.5f, .friction = 4.f};
 static constexpr projected_ball_settings_t WEIGHTLESS{.radius = 0.03f, .gravity = 0.f, .restitution = 0.5f, .friction = 4.f};
 
-static const projector_mask_rectangle_t FLOOR{0.f, 0.8f, 1.f, 1.f};
-static constexpr float                  RESTING_V = 0.8f - 0.03f;
+static const projector_mask_quad_t FLOOR     = make_projector_mask_quad(0.f, 0.8f, 1.f, 1.f);
+static constexpr float             RESTING_V = 0.8f - 0.03f;
 
-static projected_ball_t run_ticks(const std::vector<projector_mask_rectangle_t>& solids, projected_ball_t ball,
+static projected_ball_t run_ticks(const std::vector<projector_mask_quad_t>& solids, projected_ball_t ball,
                                   const projected_ball_settings_t& settings, int ticks)
 {
   for (int tick = 0; tick < ticks; ++tick)
-    ball = shared::projected_ball_step(Span<const projector_mask_rectangle_t>(solids), ball, settings, TICK);
+    ball = shared::projected_ball_step(Span<const projector_mask_quad_t>(solids), ball, settings, TICK);
   return ball;
 }
 
@@ -65,8 +73,8 @@ static void test_falls_onto_a_rectangle_and_sits()
 static void test_bounces_off_a_wall()
 {
   printf("bounces off a wall\n");
-  const projector_mask_rectangle_t wall{0.9f, 0.f, 1.f, 1.f};
-  const projected_ball_t           ball = run_ticks({wall}, {{0.5f, 0.5f}, {2.f, 0.f}}, WEIGHTLESS, 32);
+  const projector_mask_quad_t wall = make_projector_mask_quad(0.9f, 0.f, 1.f, 1.f);
+  const projected_ball_t      ball = run_ticks({wall}, {{0.5f, 0.5f}, {2.f, 0.f}}, WEIGHTLESS, 32);
   check(near(ball.velocity.u, -1.f, 1e-3f), "comes back at restitution times its speed");
   check(ball.uv.u <= 0.9f - 0.03f + 1e-4f, "is outside the wall");
   check(near(ball.uv.v, 0.5f, 1e-5f), "a wall hit leaves v alone");
@@ -84,9 +92,10 @@ static void test_rolls_to_a_stop()
 static void test_falls_through_a_gap()
 {
   printf("falls through a gap and leaves the frame\n");
-  const std::vector<projector_mask_rectangle_t> ledges{{0.f, 0.8f, 0.4f, 1.f}, {0.6f, 0.8f, 1.f, 1.f}};
-  projected_ball_t                              ball{{0.5f, 0.5f}, {0.f, 0.f}};
-  int                                           ticks_until_outside = 0;
+  const std::vector<projector_mask_quad_t> ledges{make_projector_mask_quad(0.f, 0.8f, 0.4f, 1.f),
+                                                  make_projector_mask_quad(0.6f, 0.8f, 1.f, 1.f)};
+  projected_ball_t                         ball{{0.5f, 0.5f}, {0.f, 0.f}};
+  int                                      ticks_until_outside = 0;
   while (!shared::projected_ball_is_outside_frame(ball) && ticks_until_outside < 192)
   {
     ball = run_ticks(ledges, ball, SETTINGS, 1);
@@ -110,11 +119,33 @@ static void test_carried_by_an_advancing_rectangle()
   projected_ball_t ball{{0.5f, RESTING_V}, {0.f, 0.f}};
   for (int tick = 0; tick < 30; ++tick)
   {
-    const projector_mask_rectangle_t wall{0.f, 0.f, 0.3f + 0.01f * static_cast<float>(tick + 1), 1.f};
-    ball = run_ticks({FLOOR, wall}, ball, SETTINGS, 1);
+    const projector_mask_quad_t wall = make_projector_mask_quad(0.f, 0.f, 0.3f + 0.01f * static_cast<float>(tick + 1), 1.f);
+    ball                             = run_ticks({FLOOR, wall}, ball, SETTINGS, 1);
   }
   check(ball.uv.u >= 0.6f + 0.03f - 1e-4f, "is ahead of the wall's edge");
   check(near(ball.uv.v, RESTING_V, 1e-3f), "and still on the floor");
+}
+
+// A slash across the frame, top-right to bottom-left, as a glyph's solid is: a parallelogram, not stairs.
+static void test_rolls_down_a_slash()
+{
+  printf("rolls down a slash\n");
+  const projector_mask_quad_t slash{.corners = {{{0.9f, 0.1f}, {1.0f, 0.1f}, {0.1f, 0.9f}, {0.0f, 0.9f}}}};
+  projected_ball_t            ball{{0.6f, 0.2f}, {0.f, 0.f}};
+  float                       least_u      = ball.uv.u;
+  float                       greatest_v   = ball.uv.v;
+  bool                        stayed_above = true;
+  for (int tick = 0; tick < 192 && !shared::projected_ball_is_outside_frame(ball); ++tick)
+  {
+    ball       = run_ticks({slash}, ball, SETTINGS, 1);
+    least_u    = std::min(least_u, ball.uv.u);
+    greatest_v = std::max(greatest_v, ball.uv.v);
+    const float slope_v_at_ball = 0.1f + (0.9f - ball.uv.u) * (0.8f / 0.9f);
+    stayed_above &= ball.uv.v <= slope_v_at_ball + 1e-3f;
+  }
+  check(least_u < 0.4f, "it rolled left along the slope");
+  check(greatest_v > 0.5f, "and down it");
+  check(stayed_above, "never through it");
 }
 
 static assets::posed_hitbox_t sphere_hitbox(const vec3f& centre, float radius)
@@ -141,23 +172,23 @@ static void test_hitbox_silhouette_on_the_picture()
   const linalg::mat4f matrix      = shared::projector_picture_matrix(light);
   const float         half_height = 10.f * std::tan(linalg::to_radians(30.f));
 
-  const std::optional<projector_mask_rectangle_t> centred =
+  const std::optional<projector_mask_quad_t> centred =
       shared::try_project_hitbox_to_picture(matrix, sphere_hitbox({0.f, 0.f, -10.f}, 1.f));
   check(centred.has_value(), "a sphere on the axis casts");
-  check(centred && near(0.5f * (centred->u0 + centred->u1), 0.5f, 1e-4f), "centred in u");
-  check(centred && near(0.5f * (centred->v0 + centred->v1), 0.5f, 1e-4f), "centred in v");
+  check(centred && near(0.5f * (u0(*centred) + u1(*centred)), 0.5f, 1e-4f), "centred in u");
+  check(centred && near(0.5f * (v0(*centred) + v1(*centred)), 0.5f, 1e-4f), "centred in v");
   const float near_face_half_height = 9.f * std::tan(linalg::to_radians(30.f));
-  check(centred && near(centred->v1 - centred->v0, 1.f / near_face_half_height, 1e-4f),
+  check(centred && near(v1(*centred) - v0(*centred), 1.f / near_face_half_height, 1e-4f),
         "its height is its box's near face over the frame's there");
-  check(centred && near(centred->u1 - centred->u0, 0.5f / near_face_half_height, 1e-4f), "its width is that over the aspect");
+  check(centred && near(u1(*centred) - u0(*centred), 0.5f / near_face_half_height, 1e-4f), "its width is that over the aspect");
 
-  const std::optional<projector_mask_rectangle_t> raised =
+  const std::optional<projector_mask_quad_t> raised =
       shared::try_project_hitbox_to_picture(matrix, sphere_hitbox({0.f, 0.5f * half_height, -10.f}, 0.f));
-  check(raised.has_value() && near(raised->v0, 0.25f, 1e-4f), "world up is up the picture: half way to the top is v a quarter");
+  check(raised.has_value() && near(v0(*raised), 0.25f, 1e-4f), "world up is up the picture: half way to the top is v a quarter");
 
   const assets::posed_hitbox_t box = assets::make_box_hit_volume({0.f, 0.f, -10.f}, {1.f, 2.f, 3.f}, entities::Hit_Region::Torso);
-  const std::optional<projector_mask_rectangle_t> boxed = shared::try_project_hitbox_to_picture(matrix, box);
-  check(boxed && near(boxed->v1 - boxed->v0, 4.f / (2.f * (10.f - 3.f) * std::tan(linalg::to_radians(30.f))), 1e-4f),
+  const std::optional<projector_mask_quad_t> boxed = shared::try_project_hitbox_to_picture(matrix, box);
+  check(boxed && near(v1(*boxed) - v0(*boxed), 4.f / (2.f * (10.f - 3.f) * std::tan(linalg::to_radians(30.f))), 1e-4f),
         "a box's near face bounds its silhouette");
 
   check(!shared::try_project_hitbox_to_picture(matrix, sphere_hitbox({0.f, 0.f, 10.f}, 1.f)).has_value(),
@@ -230,6 +261,7 @@ int main()
   test_falls_through_a_gap();
   test_pushed_out_of_a_rectangle_it_starts_inside();
   test_carried_by_an_advancing_rectangle();
+  test_rolls_down_a_slash();
   test_hitbox_silhouette_on_the_picture();
   test_room_point_is_where_the_picture_lands();
 

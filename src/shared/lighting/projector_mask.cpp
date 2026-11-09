@@ -12,11 +12,19 @@
 namespace shared
 {
 
-namespace
+projector_mask_grid_t compute_projector_mask_grid_for_aspect(float aspect)
 {
+  if (!(aspect > 0.f))
+    fatal_error("[mask] a projector's aspect is its width over its height, not {}", aspect);
+  const float    limit = static_cast<float>(PROJECTOR_MASK_GRID_LIMIT);
+  const uint32_t short_side =
+      std::max<uint32_t>(1u, static_cast<uint32_t>(std::lround(aspect >= 1.f ? limit / aspect : limit * aspect)));
+  return aspect >= 1.f ? projector_mask_grid_t{.columns = PROJECTOR_MASK_GRID_LIMIT, .rows = short_side}
+                       : projector_mask_grid_t{.columns = short_side, .rows = PROJECTOR_MASK_GRID_LIMIT};
+}
 
-std::vector<bool> compute_dark_cells(const assets::texture_asset_t& picture, uint32_t columns, uint32_t rows,
-                                     float dark_threshold)
+std::vector<bool> compute_dark_cells_of_picture(const assets::texture_asset_t& picture, uint32_t columns,
+                                                uint32_t rows, float dark_threshold)
 {
   const uint32_t    width  = static_cast<uint32_t>(picture.width);
   const uint32_t    height = static_cast<uint32_t>(picture.height);
@@ -46,10 +54,8 @@ std::vector<bool> compute_dark_cells(const assets::texture_asset_t& picture, uin
   return dark;
 }
 
-} // namespace
-
 bool cover_dark_cells_with_rectangles(std::vector<bool>& dark, uint32_t columns, uint32_t rows,
-                                      std::vector<projector_mask_rectangle_t>& out)
+                                      std::vector<projector_mask_quad_t>& out)
 {
   const auto cell = [&](uint32_t column, uint32_t row) -> std::vector<bool>::reference
   { return dark[static_cast<size_t>(row) * columns + column]; };
@@ -77,20 +83,22 @@ bool cover_dark_cells_with_rectangles(std::vector<bool>& dark, uint32_t columns,
       for (uint32_t r = row; r < row_end; ++r)
         for (uint32_t c = column; c < column_end; ++c)
           cell(c, r) = false;
-      out.push_back({.u0 = static_cast<float>(column) / static_cast<float>(columns),
-                     .v0 = static_cast<float>(row) / static_cast<float>(rows),
-                     .u1 = static_cast<float>(column_end) / static_cast<float>(columns),
-                     .v1 = static_cast<float>(row_end) / static_cast<float>(rows)});
+      out.push_back(make_projector_mask_quad(static_cast<float>(column) / static_cast<float>(columns),
+                                             static_cast<float>(row) / static_cast<float>(rows),
+                                             static_cast<float>(column_end) / static_cast<float>(columns),
+                                             static_cast<float>(row_end) / static_cast<float>(rows)));
     }
   return false;
 }
 
 bool compute_projector_shadow_footprint(entity_uid_t projector, const scene_light_t& light,
                                         const linalg::mat4f& picture_matrix, Span<const shadow_volume_t> volumes,
-                                        std::vector<bool>& cells, std::vector<projector_mask_rectangle_t>& out)
+                                        std::vector<bool>& cells, std::vector<projector_mask_quad_t>& out)
 {
-  constexpr uint32_t CELLS = PROJECTOR_MASK_GRID_LIMIT;
-  cells.assign(static_cast<size_t>(CELLS) * CELLS, false);
+  const projector_mask_grid_t grid    = compute_projector_mask_grid_for_aspect(light.aspect);
+  const uint32_t              COLUMNS = grid.columns;
+  const uint32_t              ROWS    = grid.rows;
+  cells.assign(static_cast<size_t>(COLUMNS) * ROWS, false);
 
   const Array<linalg::vec3f, 4> corners  = compute_projector_frame_corners(light, 1.f);
   const linalg::vec3f           top_left = corners[3];
@@ -105,8 +113,8 @@ bool compute_projector_shadow_footprint(entity_uid_t projector, const scene_ligh
 
     uint32_t column_begin = 0;
     uint32_t row_begin    = 0;
-    uint32_t column_end   = CELLS;
-    uint32_t row_end      = CELLS;
+    uint32_t column_end   = COLUMNS;
+    uint32_t row_end      = ROWS;
     {
       float u0 = 1e9f, v0 = 1e9f, u1 = -1e9f, v1 = -1e9f;
       bool  behind_the_lens = false;
@@ -130,70 +138,45 @@ bool compute_projector_shadow_footprint(entity_uid_t projector, const scene_ligh
       {
         if (u1 <= 0.f || u0 >= 1.f || v1 <= 0.f || v0 >= 1.f)
           continue;
-        column_begin = static_cast<uint32_t>(std::floor(std::clamp(u0, 0.f, 1.f) * CELLS));
-        row_begin    = static_cast<uint32_t>(std::floor(std::clamp(v0, 0.f, 1.f) * CELLS));
-        column_end   = std::min(CELLS, static_cast<uint32_t>(std::ceil(std::clamp(u1, 0.f, 1.f) * CELLS)));
-        row_end      = std::min(CELLS, static_cast<uint32_t>(std::ceil(std::clamp(v1, 0.f, 1.f) * CELLS)));
+        column_begin = static_cast<uint32_t>(std::floor(std::clamp(u0, 0.f, 1.f) * COLUMNS));
+        row_begin    = static_cast<uint32_t>(std::floor(std::clamp(v0, 0.f, 1.f) * ROWS));
+        column_end   = std::min(COLUMNS, static_cast<uint32_t>(std::ceil(std::clamp(u1, 0.f, 1.f) * COLUMNS)));
+        row_end      = std::min(ROWS, static_cast<uint32_t>(std::ceil(std::clamp(v1, 0.f, 1.f) * ROWS)));
       }
     }
 
     for (uint32_t row = row_begin; row < row_end; ++row)
       for (uint32_t column = column_begin; column < column_end; ++column)
       {
-        const float         u     = (static_cast<float>(column) + 0.5f) / static_cast<float>(CELLS);
-        const float         v     = (static_cast<float>(row) + 0.5f) / static_cast<float>(CELLS);
+        const float         u     = (static_cast<float>(column) + 0.5f) / static_cast<float>(COLUMNS);
+        const float         v     = (static_cast<float>(row) + 0.5f) / static_cast<float>(ROWS);
         const linalg::vec3f point = top_left + across * u + down * v;
         bool                inside = true;
         for (uint32_t plane = 0; plane < volume.ring_plane_count && inside; ++plane)
           inside = linalg::dot(volume.side_planes[plane].normal, point - volume.side_planes[plane].point) <= 0.f;
         if (inside)
         {
-          cells[static_cast<size_t>(row) * CELLS + column] = true;
-          any_dark                                         = true;
+          cells[static_cast<size_t>(row) * COLUMNS + column] = true;
+          any_dark                                           = true;
         }
       }
   }
 
   if (!any_dark)
     return false;
-  return cover_dark_cells_with_rectangles(cells, CELLS, CELLS, out);
+  return cover_dark_cells_with_rectangles(cells, COLUMNS, ROWS, out);
 }
 
-projector_mask_t compute_projector_mask_from_picture(const assets::texture_asset_t& picture,
-                                                     assets::texture_asset texture, float dark_threshold)
+projector_mask_t compute_projector_mask_from_cells(std::vector<bool> dark, uint32_t columns, uint32_t rows)
 {
   projector_mask_t mask;
-  mask.texture = texture;
-  if (picture.width <= 0 || picture.height <= 0 || picture.channels != 4 ||
-      picture.pixels.size() < static_cast<size_t>(picture.width) * static_cast<size_t>(picture.height) * 4)
-    return mask;
-  mask.columns = std::min<uint32_t>(static_cast<uint32_t>(picture.width), PROJECTOR_MASK_GRID_LIMIT);
-  mask.rows    = std::min<uint32_t>(static_cast<uint32_t>(picture.height), PROJECTOR_MASK_GRID_LIMIT);
-
-  std::vector<bool> dark = compute_dark_cells(picture, mask.columns, mask.rows, dark_threshold);
-  mask.capped            = cover_dark_cells_with_rectangles(dark, mask.columns, mask.rows, mask.rectangles);
-  if (mask.capped)
-    log_warning("[projector] the picture '{}' has more dark than {} rectangles cover; the rest is dark but not solid",
-                assets::to_string(texture), MAX_PROJECTOR_MASK_RECTANGLES);
+  mask.columns = columns;
+  mask.rows    = rows;
+  if (dark.size() != static_cast<size_t>(columns) * rows)
+    fatal_error("[projector] a {} by {} grid has {} cells, not {}", columns, rows,
+                static_cast<size_t>(columns) * rows, dark.size());
+  mask.capped = cover_dark_cells_with_rectangles(dark, columns, rows, mask.quads);
   return mask;
-}
-
-const projector_mask_t& find_or_compute_projector_mask(projector_mask_cache_t& cache, assets::texture_asset texture)
-{
-  for (const projector_mask_t& mask : cache.masks)
-    if (mask.texture == texture)
-      return mask;
-  projector_mask_t mask;
-  mask.texture = texture;
-  if (texture != assets::texture_asset::Missing)
-  {
-    const assets::asset_handle_t<assets::texture_asset_t> handle = assets::get_texture(texture);
-    const assets::texture_asset_t*                        picture = handle.valid() ? assets::get(handle) : nullptr;
-    if (picture != nullptr)
-      mask = compute_projector_mask_from_picture(*picture, texture, PROJECTOR_MASK_DARK_THRESHOLD);
-  }
-  cache.masks.push_back(std::move(mask));
-  return cache.masks.back();
 }
 
 linalg::vec3f projector_frame_point(const shadow_light_t& light, float u, float v, float distance)
@@ -216,26 +199,70 @@ float projector_mask_glass_distance(const shadow_light_t& light)
   return distance;
 }
 
-std::optional<collision_piece_t> try_build_projector_mask_piece(const shadow_light_t&             light,
-                                                                const projector_mask_rectangle_t& rectangle)
+std::optional<collision_piece_t> try_build_projector_mask_piece(const shadow_light_t&        light,
+                                                                const projector_mask_quad_t& quad)
 {
-  const float            near_distance = projector_mask_glass_distance(light);
-  const float            far_distance  = near_distance * 1.25f;
-  Array<linalg::vec3, 8> corners;
-  uint32_t               count = 0;
-  for (const float distance : {near_distance, far_distance})
+  // The slab's shape is known, so it is written down rather than hulled: two caps square to the axis and a side
+  // through the apex and each edge, outward, wound counter-clockwise seen from outside as a hull's faces are.
+  const float near_distance = projector_mask_glass_distance(light);
+  const float far_distance  = near_distance * 1.25f;
+
+  Array<uint32_t, 4> kept;
+  uint32_t           kept_count = 0;
+  for (uint32_t index = 0; index < 4; ++index)
   {
-    corners[count++] = projector_frame_point(light, rectangle.u0, rectangle.v0, distance);
-    corners[count++] = projector_frame_point(light, rectangle.u1, rectangle.v0, distance);
-    corners[count++] = projector_frame_point(light, rectangle.u1, rectangle.v1, distance);
-    corners[count++] = projector_frame_point(light, rectangle.u0, rectangle.v1, distance);
+    const linalg::vec2f& corner = quad.corners[index];
+    bool                 repeated = false;
+    for (uint32_t other = 0; other < kept_count; ++other)
+      repeated |= linalg::length(corner - quad.corners[kept[other]]) < 1e-6f;
+    if (!repeated)
+      kept[kept_count++] = index;
   }
-  const std::optional<convex_polyhedron_t> hull = try_build_convex_hull(corners);
-  if (!hull)
+  if (kept_count < 3)
     return std::nullopt;
-  return collision_piece_t{.bounds        = compute_point_bounds(hull->vertices),
-                           .planes        = compute_polyhedron_planes(*hull),
-                           .face_polygons = compute_polyhedron_face_polygons(*hull)};
+
+  Array<linalg::vec3, 4> near_corners;
+  Array<linalg::vec3, 4> far_corners;
+  Array<linalg::vec3, 8> every_corner;
+  linalg::vec3           centre = {0.f, 0.f, 0.f};
+  for (uint32_t index = 0; index < kept_count; ++index)
+  {
+    const linalg::vec2f& corner = quad.corners[kept[index]];
+    near_corners[index]         = projector_frame_point(light, corner.u, corner.v, near_distance);
+    far_corners[index]          = projector_frame_point(light, corner.u, corner.v, far_distance);
+    every_corner[index]         = near_corners[index];
+    every_corner[kept_count + index] = far_corners[index];
+    centre = centre + (near_corners[index] + far_corners[index]) * (0.5f / static_cast<float>(kept_count));
+  }
+
+  collision_piece_t piece;
+  piece.bounds = compute_point_bounds(Span<const linalg::vec3>(every_corner.data, kept_count * 2));
+  const auto add_face = [&](std::vector<linalg::vec3> polygon, linalg::vec3 normal) -> bool
+  {
+    if (linalg::length(normal) < 1e-6f)
+      return false;
+    normal = linalg::normalize(normal);
+    if (linalg::dot(normal, polygon[0] - centre) < 0.f)
+      normal = normal * -1.f;
+    if (linalg::dot(linalg::cross(polygon[1] - polygon[0], polygon[2] - polygon[0]), normal) < 0.f)
+      std::reverse(polygon.begin(), polygon.end());
+    piece.planes.push_back(Plane{.point = polygon[0], .normal = normal});
+    piece.face_polygons.push_back(std::move(polygon));
+    return true;
+  };
+
+  std::vector<linalg::vec3> near_cap(near_corners.begin(), near_corners.begin() + kept_count);
+  std::vector<linalg::vec3> far_cap(far_corners.begin(), far_corners.begin() + kept_count);
+  if (!add_face(std::move(near_cap), light.direction) || !add_face(std::move(far_cap), light.direction))
+    return std::nullopt;
+  for (uint32_t index = 0; index < kept_count; ++index)
+  {
+    const uint32_t next = (index + 1) % kept_count;
+    if (!add_face({near_corners[index], near_corners[next], far_corners[next], far_corners[index]},
+                  linalg::cross(near_corners[next] - near_corners[index], far_corners[index] - near_corners[index])))
+      return std::nullopt;
+  }
+  return piece;
 }
 
 } // namespace shared

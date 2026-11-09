@@ -261,6 +261,8 @@ int main()
         entity_type::Projector_Entity,
         // Every field of its own: the server integrates its uv.
         entity_type::Projected_Ball_Entity,
+        // Its rows: the picture is written on the server and read on both ends.
+        entity_type::Projected_Image_Entity,
     };
     Span<const entity_type> replicated = replicated_entity_types();
 

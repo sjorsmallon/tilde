@@ -323,6 +323,12 @@ void shim_projected_ball_entity_set_color(Entity& entity, const action_data_t& d
   set_color(self, data.as_set_color(), context);
 }
 
+void shim_projected_image_entity_set_character(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Projected_Image_Entity& self = *entity_as<Projected_Image_Entity>(&entity);
+  set_character(self, data.as_set_character(), context);
+}
+
 void shim_logic_counter_entity_add(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Logic_Counter_Entity& self = *entity_as<Logic_Counter_Entity>(&entity);
@@ -500,6 +506,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     nullptr,   // Set_Color
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     shim_player_entity_kill,
@@ -540,6 +547,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     nullptr,   // Set_Color
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     shim_damageable_entity_kill,
@@ -573,6 +581,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_sound_emitter_entity_play,
     shim_sound_emitter_entity_stop_playing,
     nullptr,   // Set_Color
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill
@@ -605,6 +614,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     shim_point_light_entity_set_color,
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill
@@ -637,6 +647,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     shim_spot_light_entity_set_color,
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill
@@ -670,6 +681,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     nullptr,   // Set_Color
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill
@@ -702,6 +714,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     nullptr,   // Set_Color
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill
@@ -735,6 +748,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     nullptr,   // Set_Color
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill
@@ -767,6 +781,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     nullptr,   // Set_Color
+    nullptr,   // Set_Character
     shim_logic_counter_entity_add,
     shim_logic_counter_entity_reset,
     nullptr,   // Kill
@@ -799,6 +814,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     nullptr,   // Set_Color
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill
@@ -832,6 +848,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     nullptr,   // Set_Color
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill
@@ -865,6 +882,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     nullptr,   // Set_Color
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill
@@ -897,6 +915,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     nullptr,   // Set_Color
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill
@@ -929,6 +948,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     nullptr,   // Set_Color
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill
@@ -963,6 +983,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     nullptr,   // Set_Color
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill
@@ -996,6 +1017,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     nullptr,   // Set_Color
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill
@@ -1028,6 +1050,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     nullptr,   // Set_Color
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill
@@ -1060,6 +1083,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     nullptr,   // Set_Color
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill
@@ -1092,6 +1116,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     nullptr,   // Set_Color
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill
@@ -1124,6 +1149,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     shim_projector_entity_set_color,
+    nullptr,   // Set_Character
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill
@@ -1156,6 +1182,40 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Play
     nullptr,   // Stop_Playing
     shim_projected_ball_entity_set_color,
+    nullptr,   // Set_Character
+    nullptr,   // Add
+    nullptr,   // Reset
+    nullptr,   // Kill
+    nullptr,   // Set_Health
+    nullptr,   // Damage
+    nullptr,   // Teleport
+    nullptr,   // Set_Velocity
+    nullptr,   // Add_Velocity
+    nullptr,   // Grant_Weapon
+    nullptr,   // Take_Weapon
+    nullptr,   // Set_Respawn_Point
+    nullptr,   // Complete_Level
+    nullptr,   // Start
+    nullptr,   // Stop
+    nullptr,   // Restart
+    nullptr,   // Pause
+    nullptr,   // Resume
+    nullptr,   // Start_Match
+    nullptr,   // End_Round
+    nullptr,   // Restart_Round
+    nullptr,   // End_Match
+    nullptr,   // Reverse
+    nullptr,   // Go_To
+    nullptr,   // Fire
+  },
+  {   // Projected_Image_Entity
+    nullptr,   // Enable
+    nullptr,   // Disable
+    nullptr,   // Toggle_Enabled
+    nullptr,   // Play
+    nullptr,   // Stop_Playing
+    nullptr,   // Set_Color
+    shim_projected_image_entity_set_character,
     nullptr,   // Add
     nullptr,   // Reset
     nullptr,   // Kill
@@ -1305,6 +1365,23 @@ void set_color(Entity& entity, const Set_Color_Data& payload, input_context_t& c
 {
   if (!try_set_color(entity, payload, context))
     fatal_error("{} does not accept Set_Color", entity_info(entity.type).classname);
+}
+
+bool try_set_character(Entity& entity, const Set_Character_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Set_Character];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void set_character(Entity& entity, const Set_Character_Data& payload, input_context_t& context)
+{
+  if (!try_set_character(entity, payload, context))
+    fatal_error("{} does not accept Set_Character", entity_info(entity.type).classname);
 }
 
 bool try_add(Entity& entity, const Add_Data& payload, input_context_t& context)

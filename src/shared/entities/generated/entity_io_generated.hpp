@@ -17,6 +17,7 @@
 #include "traits/switchable_generated.hpp"
 #include "traits/playable_generated.hpp"
 #include "traits/colorable_generated.hpp"
+#include "traits/typeable_generated.hpp"
 #include "traits/counting_generated.hpp"
 #include "traits/touchable_generated.hpp"
 #include "traits/mortal_generated.hpp"
@@ -60,6 +61,7 @@ struct action_data_t
     Play_Data play;
     Stop_Playing_Data stop_playing;
     Set_Color_Data set_color;
+    Set_Character_Data set_character;
     Add_Data add;
     Reset_Data reset;
     Kill_Data kill;
@@ -92,6 +94,7 @@ struct action_data_t
   const Play_Data& as_play() const { assert(tag == entity_action::Play); return play; }
   const Stop_Playing_Data& as_stop_playing() const { assert(tag == entity_action::Stop_Playing); return stop_playing; }
   const Set_Color_Data& as_set_color() const { assert(tag == entity_action::Set_Color); return set_color; }
+  const Set_Character_Data& as_set_character() const { assert(tag == entity_action::Set_Character); return set_character; }
   const Add_Data& as_add() const { assert(tag == entity_action::Add); return add; }
   const Reset_Data& as_reset() const { assert(tag == entity_action::Reset); return reset; }
   const Kill_Data& as_kill() const { assert(tag == entity_action::Kill); return kill; }
@@ -126,6 +129,7 @@ action_data_t erase(const Toggle_Enabled_Data& payload);
 action_data_t erase(const Play_Data& payload);
 action_data_t erase(const Stop_Playing_Data& payload);
 action_data_t erase(const Set_Color_Data& payload);
+action_data_t erase(const Set_Character_Data& payload);
 action_data_t erase(const Add_Data& payload);
 action_data_t erase(const Reset_Data& payload);
 action_data_t erase(const Kill_Data& payload);
@@ -203,6 +207,7 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   trait_bit(entity_trait::Switchable),   // Lens_Entity
   trait_bit(entity_trait::Colorable) | trait_bit(entity_trait::Switchable),   // Projector_Entity
   trait_bit(entity_trait::Colorable),   // Projected_Ball_Entity
+  trait_bit(entity_trait::Typeable),   // Projected_Image_Entity
 };
 
 inline bool type_has_trait(entity_type type, entity_trait trait)
@@ -271,6 +276,7 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled),   // Lens_Entity
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Set_Color),   // Projector_Entity
   action_bit(entity_action::Set_Color),   // Projected_Ball_Entity
+  action_bit(entity_action::Set_Character),   // Projected_Image_Entity
 };
 
 inline bool type_accepts_action(entity_type type, entity_action action)
@@ -331,6 +337,7 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Lens_Entity
   signal_bit(entity_signal::Color_Changed),   // Projector_Entity
   signal_bit(entity_signal::Color_Changed),   // Projected_Ball_Entity
+  0u,   // Projected_Image_Entity
 };
 
 inline bool type_emits_signal(entity_type type, entity_signal signal)

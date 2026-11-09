@@ -1,9 +1,10 @@
 #pragma once
 // A ball in a projector's picture (projector_plan.md ss3b): a disc in picture uv under gravity along +v,
-// moved and then pushed out of every solid rectangle it overlaps, reflecting off each by a restitution and
+// moved and then pushed out of every solid quad it overlaps, reflecting off each by a restitution and
 // slowed along it by a friction. It is the bounce body's 2D twin and deliberately as little as that: no
 // sweep (a ball that tunnels leaves the frame and respawns), no rest state (a ball on a ledge sits because
-// nothing moves it), one shape kind (the mask's rectangles, and the players' silhouettes as rectangles).
+// nothing moves it), one shape kind (the convex quad: the mask's dark, the typed glyphs' solids, and the
+// players' silhouettes as boxes).
 
 #include "animation/hitbox_rig.hpp"
 #include "collision/collision_detection.hpp"
@@ -39,19 +40,18 @@ struct projected_ball_settings_t
 };
 
 // One tick.
-[[nodiscard]] projected_ball_t projected_ball_step(Span<const projector_mask_rectangle_t> solids,
-                                                   const projected_ball_t&                ball,
-                                                   const projected_ball_settings_t&       settings,
-                                                   float                                  dt);
+[[nodiscard]] projected_ball_t projected_ball_step(Span<const projector_mask_quad_t> solids,
+                                                   const projected_ball_t&           ball,
+                                                   const projected_ball_settings_t&  settings, float dt);
 
 // The centre is on or past the unit uv square's edge: the ball respawns. On the edge counts, so a ball that
 // was never placed (uv zero) starts at its spawn.
 [[nodiscard]] bool projected_ball_is_outside_frame(const projected_ball_t& ball);
 
-// A hitbox's silhouette on the picture as a solid: the uv rectangle bounding the corners of its world box
-// through the projector's picture matrix (lighting.hpp's projector_picture_matrix, the map the shader reads
-// the picture by). Empty when a corner is behind the lens or the rectangle misses the frame.
-[[nodiscard]] std::optional<projector_mask_rectangle_t>
+// A hitbox's silhouette on the picture as a solid: the uv box bounding the corners of its world box through
+// the projector's picture matrix (lighting.hpp's projector_picture_matrix, the map the shader reads the
+// picture by). Empty when a corner is behind the lens or the box misses the frame.
+[[nodiscard]] std::optional<projector_mask_quad_t>
 try_project_hitbox_to_picture(const linalg::mat4f& picture_matrix, const assets::posed_hitbox_t& hitbox);
 
 // Where the ball is in the room (projector_plan.md ss3c): the ray from the lens through its uv against the

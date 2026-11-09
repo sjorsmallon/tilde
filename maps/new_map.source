@@ -370,6 +370,15 @@ entity
   "range" "2048"
   "half_angle_degrees" "20"
   "aspect" "1.7778"
+}
+entity
+{
+  "classname" "projected_image_entity"
+  "_uid" "23"
+  "position" "-640 150 128"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "projector" "4"
   "texture" "ball_gobo"
 }
 entity

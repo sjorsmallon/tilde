@@ -25,7 +25,8 @@ enum class contact_effect_t : uint8_t
   Explode,
   Land,
   Leave_Zone,
-  Merge
+  Merge,
+  Camera_Swap
 };
 
 // Who is moved by a Reel or a Throw.
@@ -119,6 +120,7 @@ constexpr const char* to_string(contact_effect_t effect)
   case contact_effect_t::Land:       return "Land";
   case contact_effect_t::Leave_Zone: return "Leave_Zone";
   case contact_effect_t::Merge:      return "Merge";
+  case contact_effect_t::Camera_Swap: return "Camera_Swap";
   }
   return "?";
 }
