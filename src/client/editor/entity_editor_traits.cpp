@@ -625,6 +625,7 @@ constexpr Enum_Array<entity_type, editor_data_per_entity_type_t> EDITOR_DATA_PER
 
     {.type = entity_type::Projected_Ball_Entity, .color = colors::yellow, .draw_diagram = &projected_ball_diagram},
     {.type = entity_type::Projected_Image_Entity, .color = colors::yellow, .draw_diagram = &projected_image_diagram},
+    {.type = entity_type::Trail_Entity}, // runtime only; the render component draws its boxes
 }};
 
 static_assert(rows_in_enum_order<&editor_data_per_entity_type_t::type>(EDITOR_DATA_PER_ENTITY_TYPE),

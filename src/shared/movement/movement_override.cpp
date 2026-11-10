@@ -228,11 +228,58 @@ void end_override(const movement_settings_t& settings, move_state_t& state,
   return result;
 }
 
+// A dolly drives the hull along the aim's ground direction on the mouse buttons at override_speed,
+// forward on fire and back on secondary fire, a falling body otherwise: gravity acts, the step's jump
+// takes off and the walls clip it like any flight. The other keys reach it as nothing: they panned the
+// aim on the client. The clock is its exit, as a noclip's: End_Dolly zeroes it, and it lets go with the
+// velocity it had.
+[[nodiscard]] override_step_t step_dolly(const movement_settings_t& settings, move_state_t& state,
+                                         const move_input_t& input, const jump_t& jump)
+{
+  entities::Movement& movement = state.movement;
+
+  override_step_t result{};
+  if (movement.override_seconds_remaining <= 0.f)
+  {
+    end_override(settings, state, state.velocity, result);
+    return result;
+  }
+
+  const vec3 ground_front{input.front.x, 0.f, input.front.z};
+  vec3       direction{};
+  if (input.buttons.fire_pressed)           direction = direction + ground_front;
+  if (input.buttons.secondary_fire_pressed) direction = direction - ground_front;
+
+  const float direction_length = length(direction);
+  const vec3  velocity =
+      direction_length > 0.f ? direction * (movement.override_speed / direction_length) : vec3{};
+
+  result.moves  = true;
+  result.wanted = {.velocity          = velocity,
+                   .vertical_velocity = jump.velocity.y,
+                   .gravity           = settings.shared.gravity};
+  return result;
+}
+
 } // namespace
+
+View pan_view_by_keys(const View& view, const Move_Input& keys, float degrees_per_second, float dt)
+{
+  const float turn = degrees_per_second * dt;
+
+  View panned = view;
+  if (keys.forward_pressed)  panned.pitch += turn;
+  if (keys.backward_pressed) panned.pitch -= turn;
+  if (keys.right_pressed)    panned.yaw += turn;
+  if (keys.left_pressed)     panned.yaw -= turn;
+  panned.pitch = linalg::clamp_view_pitch(panned.pitch);
+  return panned;
+}
 
 override_step_t step_override(const movement_settings_t& settings,
                               const Bounding_Volume_Hierarchy& bvh, const predicted_world_t& world,
-                              move_state_t& state, const move_input_t& input, float dt)
+                              move_state_t& state, const move_input_t& input, const jump_t& jump,
+                              float dt)
 {
   switch (state.movement.active_override)
   {
@@ -250,6 +297,8 @@ override_step_t step_override(const movement_settings_t& settings,
       return step_merged(settings, state, dt);
     case entities::Movement_Override::Noclip:
       return step_noclip(settings, state, input);
+    case entities::Movement_Override::Dolly:
+      return step_dolly(settings, state, input, jump);
   }
   fatal_error("step_override: no arm for movement override {}",
               (int)state.movement.active_override);

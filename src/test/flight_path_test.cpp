@@ -28,9 +28,9 @@ static bool near(const vec3f& a, const vec3f& b, float tolerance = 1e-3f)
   return near(a.x, b.x, tolerance) && near(a.y, b.y, tolerance) && near(a.z, b.z, tolerance);
 }
 
-constexpr shared::flight_path_settings_t SETTINGS = {.turn_degrees     = 10.f,
-                                                     .shortest_segment = 32.f,
-                                                     .longest_segment  = 192.f,
+constexpr shared::flight_path_settings_t SETTINGS = {.rule             = {.turn_degrees     = 10.f,
+                                                                          .shortest_segment = 32.f,
+                                                                          .longest_segment  = 192.f},
                                                      .joint_overlap    = 8.f,
                                                      .drop             = 68.f,
                                                      .half_width       = 20.f,

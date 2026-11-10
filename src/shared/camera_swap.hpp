@@ -3,15 +3,18 @@
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entity_system.hpp"
 
-// The Camera Swapper weapon: two players keep their own bodies and trade mouses. Each body is walked by its
-// owner's keys and its view is turned by the OTHER's mouse, so a player watches through their own eyes
-// how someone else points them. The relation is stored on the body whose view is steered:
-// view_steered_by_uid names the player whose hand turns it. The hand's half is asked.
+// The Camera Swapper weapon: two players keep their own bodies and trade eyes and mouses, crossed once.
+// Each body is walked by its owner's keys; its head is turned by the OTHER's mouse, and that other looks
+// out of it. So A sits in B's head, turning it with A's own mouse, while A's keys walk A's body unseen.
+// The relation is stored on the body whose view is steered: view_steered_by_uid names the player whose
+// hand turns it. The hand's half is asked (try_find_player_steered_by_hand_uid).
 //
 // The server resolves a steered body's steps under the hand's latest view instead of the body's own
 // input; the owner's input keeps carrying their mouse untouched, because that mouse is turning the
-// other body. The owner's client predicts along the body's replicated view, a few ticks behind the
-// hand, and draws its camera from the same angles. player_move never learns the swap exists.
+// other body. The owner's client predicts its own body's walk along the body's replicated head, a few
+// ticks behind the hand, and nobody looks out of that head, so the lag lands where no hand waits on it.
+// The camera is the OTHER body's interpolated eye turned by the local mouse, so the look is as immediate
+// as unswapped play. player_move never learns the swap exists.
 namespace shared
 {
 

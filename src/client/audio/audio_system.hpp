@@ -51,7 +51,6 @@ struct Audio_System
   void stop_all();
   bool is_playing(voice_handle_t voice) const;
 
-  // Silences every voice, playing or yet to start.
   void set_muted(bool muted);
 
 private:

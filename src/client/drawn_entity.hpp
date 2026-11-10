@@ -3,12 +3,13 @@
 // Where and how a session entity is drawn this frame. A drawn pose has two sources and no third: replicated
 // state interpolated through the ring (what the server integrates), or launch state evaluated at the drawn tick
 // by the shared `*_at_tick` function the predicted world cuts with (what the server could derive, and so never
-// stores). try_compute_drawn_entity_at_tick is the one place that says which an entity type is.
+// stores). compute_drawn_entity_poses_at_tick is the one place that says which an entity type is.
 
 #include "client_context.hpp"
 #include "renderer.hpp"
 
 #include <optional>
+#include <vector>
 
 namespace client
 {
@@ -36,14 +37,19 @@ struct drawn_entity_t
   renderer::peel_t       peel        = {};
 };
 
-// Empty when the entity draws nowhere in the world this frame: a player (the remote-player pass draws those), a
-// held weapon, the rocket we pilot, a platform that has vanished. `local_feet` is where our own body is drawn, for
-// the canopy hanging over it.
-[[nodiscard]] std::optional<drawn_entity_t> try_compute_drawn_entity_at_tick(const client_context_t& ctx,
-                                                                             const entities::Entity& entity,
-                                                                             const entities::Render& render,
-                                                                             const drawn_tick_t&     drawn,
-                                                                             const vec3f&            local_feet);
+// Appends the poses the entity is drawn at this frame, one mesh draw each: one for most, one per edge for a
+// trail, none for an entity that draws nowhere in the world (a player, whom the remote-player pass draws; a
+// held weapon; the rocket we pilot; a platform that has vanished). `local_feet` is where our own body is drawn,
+// for the canopy hanging over it and the trail growing from it.
+void compute_drawn_entity_poses_at_tick(const client_context_t& ctx, const entities::Entity& entity,
+                                        const entities::Render& render, const drawn_tick_t& drawn,
+                                        const vec3f& local_feet, std::vector<drawn_entity_t>& poses);
+
+// Where a player's body is drawn this frame: ours at `local_feet`, a remote player's at their interpolated feet;
+// empty for a uid no drawn body answers to.
+[[nodiscard]] std::optional<vec3f> try_find_drawn_feet_for_player(const client_context_t& ctx,
+                                                                  shared::entity_uid_t    player_uid,
+                                                                  const vec3f&            local_feet);
 
 // Glued to its carrier's drawn feet: ours, a remote player's, or where it was replicated when neither is found.
 [[nodiscard]] vec3f drawn_canopy_center(const client_context_t& ctx, const entities::Canopy_Entity& canopy,

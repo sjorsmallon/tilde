@@ -8,6 +8,7 @@
 #include "entities/generated/entities/platform_entity_generated.hpp"
 #include "entities/generated/entities/shrinking_platform_entity_generated.hpp"
 #include "entities/generated/entities/timed_movement_modifier_entity_generated.hpp"
+#include "entities/generated/entities/trail_entity_generated.hpp"
 #include "entities/generated/entities/void_entity_generated.hpp"
 #include "entities/generated/entities/weapon_emancipation_grill_entity_generated.hpp"
 #include "entities/generated/entities/weapon_entity_generated.hpp"
@@ -16,6 +17,7 @@
 #include "../shared/collision/canopy.hpp"
 #include "../shared/collision/fixed_arc_flight.hpp"
 #include "../shared/collision/spawned_platforms.hpp"
+#include "../shared/collision/trail.hpp"
 #include "../shared/emancipated_weapon.hpp"
 #include "../shared/lighting/lens.hpp"
 #include "../shared/movement/bubble.hpp"
@@ -95,25 +97,63 @@ std::optional<drawn_entity_t> drawn_platform(drawn_entity_t out, const shared::c
   return out;
 }
 
+// One box per edge of the trail (shared/collision/trail.hpp), the live edge from the last point to the owner's
+// drawn feet; a trail whose owner is drawn nowhere ends at its last point.
+void append_drawn_trail(const client_context_t& ctx, const entities::Trail_Entity& trail, const drawn_entity_t& look,
+                        const vec3f& local_feet, std::vector<drawn_entity_t>& poses)
+{
+  const shared::trail_settings_t settings = {.half_width = ctx.cvars->mp_trail_half_width,
+                                             .height     = ctx.cvars->mp_trail_height};
+  const std::optional<vec3f>     owner_feet = trail.owner_uid != shared::null_entity_uid
+                                                  ? try_find_drawn_feet_for_player(ctx, trail.owner_uid, local_feet)
+                                                  : std::nullopt;
+
+  const uint32_t point_count = trail.points.size();
+  for (uint32_t index = 0; index < point_count; ++index)
+  {
+    const bool live = index + 1 == point_count;
+    if (live && !owner_feet)
+      break;
+    const vec3f                                 end = live ? *owner_feet : trail.points[index + 1];
+    const std::optional<shared::oriented_box_t> box =
+        shared::try_compute_trail_segment_box(trail.points[index], end, settings);
+    if (!box)
+      continue;
+
+    drawn_entity_t segment = look;
+    segment.position       = box->center;
+    segment.orientation    = box->orientation;
+    segment.scale          = box->half_extents * 2.0f;
+    poses.push_back(segment);
+  }
+}
+
 } // namespace
+
+std::optional<vec3f> try_find_drawn_feet_for_player(const client_context_t& ctx, shared::entity_uid_t player_uid,
+                                                    const vec3f& local_feet)
+{
+  const entities::Player_Entity* my_player = try_find_my_player(ctx);
+  if (my_player != nullptr && my_player->entity_id == player_uid)
+    return local_feet;
+
+  for (const auto& [slot, remote_player] : ctx.replication.remote_players)
+    if (remote_player.active && remote_player.entity_uid == player_uid)
+      return remote_player.drawn_position;
+
+  return std::nullopt;
+}
 
 vec3f drawn_canopy_center(const client_context_t& ctx, const entities::Canopy_Entity& canopy, const vec3f& local_feet)
 {
-  const entities::Player_Entity* my_player = try_find_my_player(ctx);
-  if (my_player != nullptr && my_player->entity_id == canopy.carrier_uid)
-    return shared::canopy_center_for(canopy, local_feet);
-
-  for (const auto& [slot, remote_player] : ctx.replication.remote_players)
-    if (remote_player.active && remote_player.entity_uid == canopy.carrier_uid)
-      return shared::canopy_center_for(canopy, remote_player.drawn_position);
-
+  if (const std::optional<vec3f> feet = try_find_drawn_feet_for_player(ctx, canopy.carrier_uid, local_feet))
+    return shared::canopy_center_for(canopy, *feet);
   return canopy.position;
 }
 
-std::optional<drawn_entity_t> try_compute_drawn_entity_at_tick(const client_context_t& ctx,
-                                                               const entities::Entity& entity,
-                                                               const entities::Render& render,
-                                                               const drawn_tick_t& drawn, const vec3f& local_feet)
+void compute_drawn_entity_poses_at_tick(const client_context_t& ctx, const entities::Entity& entity,
+                                        const entities::Render& render, const drawn_tick_t& drawn,
+                                        const vec3f& local_feet, std::vector<drawn_entity_t>& poses)
 {
   using entities::entity_type;
 
@@ -157,41 +197,48 @@ std::optional<drawn_entity_t> try_compute_drawn_entity_at_tick(const client_cont
   case entity_type::Fog_Volume_Entity:
   case entity_type::Projected_Ball_Entity:
   case entity_type::Projected_Image_Entity:
-    return out;
+    poses.push_back(out);
+    return;
 
   // Drawn by the remote-player pass through the interpolation ring, never here.
   case entity_type::Player_Entity:
-    return std::nullopt;
+    return;
 
   // A held weapon is the viewmodel's and draws nowhere in the world.
   case entity_type::Weapon_Entity:
     if (static_cast<const entities::Weapon_Entity&>(entity).owner_uid != shared::null_entity_uid)
-      return std::nullopt;
-    return out;
+      return;
+    poses.push_back(out);
+    return;
 
   // The pilot rides the predicted flight; the replicated rocket is everyone else's.
   case entity_type::Guided_Rocket_Entity:
     if (static_cast<const entities::Guided_Rocket_Entity&>(entity).pilot_uid == ctx.connection.my_entity_uid)
-      return std::nullopt;
-    return out;
+      return;
+    poses.push_back(out);
+    return;
 
   case entity_type::Platform_Entity:
-    return drawn_platform(out,
-                          shared::get_common_platform_fields(static_cast<const entities::Platform_Entity&>(entity)),
-                          drawn, flight, /*dissolves*/ false);
+    if (const std::optional<drawn_entity_t> platform = drawn_platform(
+            out, shared::get_common_platform_fields(static_cast<const entities::Platform_Entity&>(entity)), drawn,
+            flight, /*dissolves*/ false))
+      poses.push_back(*platform);
+    return;
 
   // Shrinks on the cut's clock and dissolves over its last fifth; no clock wipe.
   case entity_type::Shrinking_Platform_Entity:
-    return drawn_platform(
-        out, shared::get_common_platform_fields(static_cast<const entities::Shrinking_Platform_Entity&>(entity)),
-        drawn, flight, /*dissolves*/ true);
+    if (const std::optional<drawn_entity_t> platform = drawn_platform(
+            out, shared::get_common_platform_fields(static_cast<const entities::Shrinking_Platform_Entity&>(entity)),
+            drawn, flight, /*dissolves*/ true))
+      poses.push_back(*platform);
+    return;
 
   // Grows along its aim on the cut's clock, at the box the cut sweeps; dissolves over its last fifth.
   case entity_type::Extending_Platform_Entity:
   {
     const auto& platform = static_cast<const entities::Extending_Platform_Entity&>(entity);
     if (!shared::extending_platform_exists_at_tick(platform, drawn.tick, drawn.tickrate_hz))
-      return std::nullopt;
+      return;
 
     const shared::oriented_box_t box =
         shared::extending_platform_box_at(platform, drawn.tick, drawn.fraction, drawn.tickrate_hz);
@@ -203,7 +250,8 @@ std::optional<drawn_entity_t> try_compute_drawn_entity_at_tick(const client_cont
           platform, drawn.tick, drawn.fraction, drawn.tickrate_hz));
     else
       out.as_ghost = true;
-    return out;
+    poses.push_back(out);
+    return;
   }
 
   // Flies its arc, swells up to the burst and peels away from where it was popped.
@@ -212,7 +260,7 @@ std::optional<drawn_entity_t> try_compute_drawn_entity_at_tick(const client_cont
     const auto&                 bubble = static_cast<const entities::Bubble_Entity&>(entity);
     const shared::bubble_state_t state = shared::bubble_state_at_tick(bubble, drawn.tick, drawn.fraction, drawn.tickrate_hz);
     if (state.has_vanished)
-      return std::nullopt;
+      return;
 
     out.position = shared::bubble_position_at_tick(bubble, drawn.tick, drawn.fraction, flight);
     out.scale    = render.scale * (1.0f + (bubble.swell_scale - 1.0f) * state.swell * state.swell);
@@ -220,7 +268,8 @@ std::optional<drawn_entity_t> try_compute_drawn_entity_at_tick(const client_cont
       out.peel = {.hole_direction = bubble.popped_direction,
                   .front_angle    = state.peeled * std::numbers::pi_v<float>,
                   .armed          = true};
-    return out;
+    poses.push_back(out);
+    return;
   }
 
   case entity_type::Canopy_Entity:
@@ -228,7 +277,8 @@ std::optional<drawn_entity_t> try_compute_drawn_entity_at_tick(const client_cont
     const auto& canopy = static_cast<const entities::Canopy_Entity&>(entity);
     out.position       = drawn_canopy_center(ctx, canopy, local_feet);
     out.scale          = canopy.half_extents * 2.0f;
-    return out;
+    poses.push_back(out);
+    return;
   }
 
   // Drawn for exactly the ticks the predicted step reads it and where its flight puts it, so the box you see is
@@ -237,11 +287,12 @@ std::optional<drawn_entity_t> try_compute_drawn_entity_at_tick(const client_cont
   {
     const auto& zone = static_cast<const entities::Timed_Movement_Modifier_Entity&>(entity);
     if (!shared::timed_movement_modifier_is_active_at(zone, drawn.tick, drawn.tickrate_hz))
-      return std::nullopt;
+      return;
     out.position = shared::flight_position_at(zone.projectile, zone.flight, zone.position, drawn.tick,
                                               drawn.fraction, flight);
     out.scale    = zone.half_extents * 2.0f;
-    return out;
+    poses.push_back(out);
+    return;
   }
 
   case entity_type::Weapon_Emancipation_Grill_Entity:
@@ -249,7 +300,8 @@ std::optional<drawn_entity_t> try_compute_drawn_entity_at_tick(const client_cont
     const auto& zone = static_cast<const entities::Weapon_Emancipation_Grill_Entity&>(entity);
     out.position     = out.position + zone.volume.position;
     out.scale        = zone.volume.half_extents * 2.0f;
-    return out;
+    poses.push_back(out);
+    return;
   }
 
   case entity_type::Void_Entity:
@@ -257,7 +309,8 @@ std::optional<drawn_entity_t> try_compute_drawn_entity_at_tick(const client_cont
     const auto& zone = static_cast<const entities::Void_Entity&>(entity);
     out.position     = out.position + zone.volume.position;
     out.scale        = zone.volume.half_extents * 2.0f;
-    return out;
+    poses.push_back(out);
+    return;
   }
 
   // A switched-off lens is not there; a switched-on one is its box, tinted the colour it passes.
@@ -265,11 +318,12 @@ std::optional<drawn_entity_t> try_compute_drawn_entity_at_tick(const client_cont
   {
     const auto& lens = static_cast<const entities::Lens_Entity&>(entity);
     if (!lens.switch_state.value)
-      return std::nullopt;
+      return;
     out.position = out.position + lens.volume.position;
     out.scale    = lens.volume.half_extents * 2.0f;
     out.color    = shared::get_color_for_lens_filter(lens.filter);
-    return out;
+    poses.push_back(out);
+    return;
   }
 
   // Dissolves on the server's clock, read at the drawn tick so every client sees the same fizzle; rises at half
@@ -280,14 +334,15 @@ std::optional<drawn_entity_t> try_compute_drawn_entity_at_tick(const client_cont
     const shared::emancipated_weapon_state_t state =
         shared::emancipated_weapon_state_at_tick(fizzled, drawn.tick, drawn.fraction, drawn.tickrate_hz);
     if (state.has_vanished)
-      return std::nullopt;
+      return;
 
     out.dissolve    = state.gone;
     out.position    = out.position + vec3f{0.0f, fizzled.rise_distance * state.gone * (0.5f + 0.5f * state.gone), 0.0f};
     out.orientation = linalg::from_axis_angle({0.0f, 1.0f, 0.0f},
                                               fizzled.spin_degrees_per_second * state.elapsed_seconds) *
                       out.orientation;
-    return out;
+    poses.push_back(out);
+    return;
   }
 
   // Pops in over its first moments and bobs along the pinged surface's normal for as long as it stands.
@@ -303,8 +358,14 @@ std::optional<drawn_entity_t> try_compute_drawn_entity_at_tick(const client_cont
     const float lift = shared::evaluate(BOB, shared::ping_pong(age_seconds, BOB.duration));
     out.position     = out.position + linalg::rotate(out.orientation, vec3f{0.0f, 1.0f, 0.0f}) * lift;
     out.scale        = out.scale * shared::evaluate(POP, age_seconds);
-    return out;
+    poses.push_back(out);
+    return;
   }
+
+  // One box per edge, the live edge ending at the owner's drawn feet.
+  case entity_type::Trail_Entity:
+    append_drawn_trail(ctx, static_cast<const entities::Trail_Entity&>(entity), out, local_feet, poses);
+    return;
   }
 
   std::unreachable();

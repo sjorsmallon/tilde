@@ -160,6 +160,9 @@ int main()
         "swapped, each head is the OTHER's mouse");
   check(heads_toward(player(world, world.a).velocity - a_velocity_before, 200.f),
         "A's forward key accelerates A along B's mouse");
+  tick(world, 20.f, 210.f);
+  check(player(world, world.a).view_angle_yaw == 210.f && player(world, world.b).view_angle_yaw == 20.f,
+        "both heads take the hand's view of THIS tick, whichever slot steps first");
 
   // --- a second shot by a swapped shooter releases both, whoever it hits ---
   shoot_camera_swap(world, world.a, shared::null_entity_uid);

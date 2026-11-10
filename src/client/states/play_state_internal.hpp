@@ -34,13 +34,18 @@ struct drawn_mover_poses_t
 // Where our own feet are drawn: the prediction plus the error offset, carried by whatever we stand on.
 [[nodiscard]] vec3f drawn_local_feet(const client_context_t& ctx);
 
-// Where our own head points: the mouse, or while a camera swap hands our view to another mouse, the head
-// the server wrote as the snapshot holds it (shared/camera_swap.hpp). The mouse keeps writing
-// prediction.player_yaw underneath either way: that is the hand riding our input, turning the other body.
+// Where our own BODY's head points: the mouse, or while a camera swap hands it to another mouse, the head the
+// server wrote as the snapshot holds it (shared/camera_swap.hpp). The mouse keeps writing prediction.player_yaw
+// underneath either way: swapped, that is the look out of the other body, which our eye sits in.
 [[nodiscard]] shared::View drawn_local_head(const client_context_t& ctx);
 
-// A passenger is inside their driver's body, and while we ride that body is the one our eye is in.
-[[nodiscard]] bool remote_player_is_hidden_by_a_merge(const client_context_t& ctx, const Remote_Player_State& remote_player);
+// The remote body a camera swap seats our eye in: the one our mouse turns. Null in our own body, and null
+// while the snapshot has the swap but the body has not reached the interpolation ring yet.
+[[nodiscard]] const Remote_Player_State* try_find_remote_body_my_eye_is_in(const client_context_t& ctx);
+
+// A passenger is inside their driver's body; the driver we ride and the body our eye is seated in are
+// the ones we look out of.
+[[nodiscard]] bool remote_player_is_hidden_from_my_eye(const client_context_t& ctx, const Remote_Player_State& remote_player);
 
 // The wipe an owner's timer puts on its geometry, read on the same clock the movers are drawn on.
 [[nodiscard]] renderer::clock_wipe_t compute_drawn_clock_wipe_for_geometry(const client_context_t& ctx,

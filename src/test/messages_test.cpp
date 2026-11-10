@@ -714,7 +714,7 @@ void test_record_layout()
   reference.write_bits((uint32_t)Message_Type::Shot_Impact, 16);
   for (const field_info_t& field : reference_fields)
     network::write_field(reference, reinterpret_cast<const uint8_t*>(&payload), field,
-                         field.offset);
+                         field.offset, nullptr);
 
   assert(stream.writer.bit_index == reference.bit_index);
   assert(stream.writer.buffer.size() == reference.buffer.size());

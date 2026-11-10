@@ -579,6 +579,8 @@ add_library(game_shared STATIC
     src/shared/color_map.hpp
     src/shared/collision/flight_path.hpp
     src/shared/collision/flight_path.cpp
+    src/shared/collision/trail.hpp
+    src/shared/collision/trail.cpp
     src/shared/collision/canopy.cpp
     src/shared/lighting/reveal_light.cpp
     src/shared/player_sight.cpp
@@ -897,6 +899,7 @@ add_library(game_client SHARED
     src/client/states/shader_editor_state.cpp
     src/client/editor/tools/selection_tool.cpp
     src/client/editor/tools/selection_tool_drag.cpp
+    src/client/editor/tools/selection_tool_focus.cpp
     src/client/editor/tools/placement_tool.cpp
     src/client/editor/tools/sculpting_tool.cpp
     src/client/editor/tools/pathfinding_test_tool.cpp
@@ -1041,6 +1044,7 @@ add_library(game_server SHARED
     src/server/systems/platform_system.cpp
     src/server/systems/canopy_system.cpp
     src/server/systems/guided_rocket_system.cpp
+    src/server/systems/trail_system.cpp
     src/server/systems/fixed_arc_flight_launch.cpp
     src/server/systems/timed_movement_modifier_system.cpp
     src/server/systems/projectile_flight.cpp
@@ -1387,6 +1391,8 @@ set(MATCH_SERVER_SOURCES
     src/server/systems/inventory_system.cpp
     src/server/systems/mover_system.cpp
     src/server/systems/launcher_system.cpp
+    # Player_Entity's Begin_Trail / End_Trail handlers call into it.
+    src/server/systems/trail_system.cpp
     src/server/spawn_projectile.cpp
     src/server/entity_lifecycle.cpp)
 add_game_test(game_rules_test
@@ -1447,6 +1453,13 @@ add_game_test(stair_step_test)
 add_game_test(hull_sweep_test)
 add_game_test(projectile_step_test)
 add_game_test(flight_path_test)
+# The trail a player leaves (shared/collision/trail.hpp): points laid from the owner's feet by the flight path
+# rule, a wall per edge that hurts whoever stands in it but the owner on their newest two, begun and ended
+# through Mobile, ended by a death or a full list; and the box test the wall is asked with.
+add_game_test(trail_test
+    SOURCES ${MATCH_SERVER_SOURCES}
+    INCLUDES src/server
+    DEFINITIONS GAME_SERVER_EXPORTS)
 # The clocks a bubble and a fizzling weapon live on, as the server reaps and the client draws them.
 add_game_test(bubble_state_test)
 add_game_test(emancipated_weapon_test)

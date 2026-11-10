@@ -139,8 +139,8 @@ struct pilot_t
 
 constexpr bool flight_path_settings_are_zero(const flight_path_settings_t& path)
 {
-  return path.turn_degrees == 0.f && path.shortest_segment == 0.f && path.longest_segment == 0.f &&
-         path.joint_overlap == 0.f && path.drop == 0.f && path.half_width == 0.f &&
+  return path.rule.turn_degrees == 0.f && path.rule.shortest_segment == 0.f &&
+         path.rule.longest_segment == 0.f && path.joint_overlap == 0.f && path.drop == 0.f && path.half_width == 0.f &&
          path.solid_seconds == 0.f && path.colors.empty();
 }
 
@@ -151,8 +151,8 @@ constexpr bool pilot_path_matches_what_it_leaves(const pilot_t& pilot)
   case pilot_leaves_t::Nothing:
     return flight_path_settings_are_zero(pilot.path);
   case pilot_leaves_t::Path:
-    return pilot.path.turn_degrees > 0.f && pilot.path.shortest_segment > 0.f &&
-           pilot.path.longest_segment > pilot.path.shortest_segment &&
+    return pilot.path.rule.turn_degrees > 0.f && pilot.path.rule.shortest_segment > 0.f &&
+           pilot.path.rule.longest_segment > pilot.path.rule.shortest_segment &&
            pilot.path.joint_overlap >= 0.f && pilot.path.half_width > 0.f &&
            pilot.path.solid_seconds > 0.f && !pilot.path.colors.empty();
   }

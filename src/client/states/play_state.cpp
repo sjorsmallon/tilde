@@ -218,6 +218,16 @@ shared::View drawn_local_head(const client_context_t &ctx)
   return {ctx.prediction.player_yaw, ctx.prediction.player_pitch};
 }
 
+const Remote_Player_State* try_find_remote_body_my_eye_is_in(const client_context_t &ctx)
+{
+  const entities::Player_Entity* my_player = try_find_my_player(ctx);
+  if (my_player == nullptr)
+    return nullptr;
+  const entities::Player_Entity* steered =
+      shared::try_find_player_steered_by_hand_uid(ctx.world.session.entity_system, my_player->entity_id);
+  return steered != nullptr ? try_find_remote_player_by_uid(ctx, steered->entity_id) : nullptr;
+}
+
 // A steered body's steps run under its head, not the mouse in the input, on both ends.
 static shared::subtick_step_t steered_step(const client_context_t &ctx, const shared::subtick_step_t &input_step)
 {
@@ -228,15 +238,15 @@ static shared::subtick_step_t steered_step(const client_context_t &ctx, const sh
   return step;
 }
 
-// A passenger is inside their driver's body, and while we ride that body is the one our eye is in.
-bool remote_player_is_hidden_by_a_merge(const client_context_t &ctx,
-                                               const Remote_Player_State &remote_player)
+// A passenger is inside their driver's body; the driver we ride and the body a camera swap seats our eye in
+// are the ones we look out of.
+bool remote_player_is_hidden_from_my_eye(const client_context_t &ctx, const Remote_Player_State &remote_player)
 {
   const entities::Player_Entity* player =
       ctx.world.session.entity_system.get<entities::Player_Entity>(remote_player.entity_uid);
   if (player != nullptr && shared::player_is_merged_passenger(*player))
     return true;
-  return try_find_remote_driver(ctx) == &remote_player;
+  return try_find_remote_driver(ctx) == &remote_player || try_find_remote_body_my_eye_is_in(ctx) == &remote_player;
 }
 
 // where are we? what's the carry here?
@@ -982,6 +992,7 @@ struct play_frame_t
 
   float fov_degrees = 0.f;
   float mouse_sensitivity = 0.f;
+  float dolly_pan_degrees_per_second = 0.f;
   uint64_t buttons = {};
 
   shared::predicted_world_storage_t predicted_world_storage{};
@@ -1542,6 +1553,7 @@ void Play_State::resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &fr
   frame.fov_degrees        = fov_degrees;
   frame.mouse_sensitivity  = mouse_sensitivity;
   frame.mouse_look_allowed = mouse_look_allowed;
+  frame.dolly_pan_degrees_per_second = ctx.cvars->cl_dolly_pan_degrees_per_second;
   frame.buttons            = buttons;
 }
 
@@ -1573,9 +1585,13 @@ void Play_State::place_button_changes_on_the_tick_timeline(client_context_t &ctx
     ctx.prediction.player_pitch = passenger->drawn_pitch;
   }
 
+  // A dolly's aim is panned by the keys below, once per frame, and the mouse travel is not read.
+  const bool dolly_live = ctx.prediction.state.move.movement.active_override ==
+                          entities::Movement_Override::Dolly;
+
   auto apply_mouse_travel = [&](linalg::vec2i motion)
   {
-    if (!mouse_look_allowed || passenger != nullptr)
+    if (!mouse_look_allowed || passenger != nullptr || dolly_live)
       return;
     ctx.prediction.player_yaw += motion.x * mouse_sensitivity;
     ctx.prediction.player_pitch -= motion.y * mouse_sensitivity;
@@ -1740,6 +1756,16 @@ void Play_State::place_button_changes_on_the_tick_timeline(client_context_t &ctx
                       polled_tracked_buttons);
           record_transition(polled_tracked_buttons, 0.f);
         }
+      }
+
+      if (dolly_live && passenger == nullptr)
+      {
+        const shared::View panned =
+            shared::pan_view_by_keys(current_view(), move_input_from_buttons(buttons),
+                                     frame.dolly_pan_degrees_per_second, dt);
+        ctx.prediction.player_yaw   = panned.yaw;
+        ctx.prediction.player_pitch = panned.pitch;
+        record_sample(live_tracked_buttons, 0.f, arrival_span.start_qpc_ticks);
       }
 
       // ONE walk, in arrival order, and that ordering is the whole reason the
@@ -2223,9 +2249,11 @@ void Play_State::leave_afterimages_at_cuts(client_context_t &ctx, play_frame_t &
     body = {feet, yaw, pitch, body_yaw, player.teleport_count};
   };
 
+  const bool                 first_person = !frame.free_camera_active && ctx.cvars->cl_spectate_slot < 0;
+  const Remote_Player_State* eye_body     = try_find_remote_body_my_eye_is_in(ctx);
   if (const entities::Player_Entity *my_player = try_find_my_player(ctx))
     observe(*my_player, drawn_local_feet(ctx), drawn_local_head(ctx).yaw, drawn_local_head(ctx).pitch,
-            my_player->body_yaw, !frame.free_camera_active && ctx.cvars->cl_spectate_slot < 0);
+            my_player->body_yaw, first_person && eye_body == nullptr);
 
   for (const auto &[slot, remote_player] : ctx.replication.remote_players)
   {
@@ -2235,7 +2263,7 @@ void Play_State::leave_afterimages_at_cuts(client_context_t &ctx, play_frame_t &
     if (player == nullptr)
       continue;
     observe(*player, remote_player.drawn_position, remote_player.drawn_yaw, remote_player.drawn_pitch,
-            remote_player.body_yaw, false);
+            remote_player.body_yaw, first_person && &remote_player == eye_body);
   }
 
   const shared::Entity_System &entity_system = ctx.world.session.entity_system;
@@ -2271,6 +2299,15 @@ void Play_State::resolve_camera(client_context_t &ctx, play_frame_t &frame)
   camera.position = local_player_rides_a_rocket(ctx)
                         ? drawn_piloted_rocket(ctx)
                         : shared::player_eye_position(drawn_local_feet(ctx));
+
+  // A camera swap seats our eye in the body our mouse turns (shared/camera_swap.hpp): the mouse is read
+  // locally, so the look never waits on the server, and only the body's interpolated position does.
+  if (const Remote_Player_State* eye_body = try_find_remote_body_my_eye_is_in(ctx))
+  {
+    camera.position = shared::player_eye_position(eye_body->drawn_position);
+    camera.yaw      = ctx.prediction.player_yaw;
+    camera.pitch    = ctx.prediction.player_pitch;
+  }
 
   if (frame.free_camera_active)
   {

@@ -371,7 +371,7 @@ prediction writes `ctx.prediction`.
   replicated state interpolated through the ring (players, bounce bodies,
   anything the server integrates), or LAUNCH state evaluated by a shared
   `*_at_tick` function both ends call (platforms, bubbles, fizzling weapons,
-  anything the server could derive). `try_compute_drawn_entity_at_tick`
+  anything the server could derive). `compute_drawn_entity_poses_at_tick`
   (`client/drawn_entity.cpp`) is the one exhaustive switch over `entity_type`
   that says which an entity is and how it looks; a type's lifecycle rule (when
   a bubble bursts, when a dropped weapon is gone) lives in `shared/` beside its

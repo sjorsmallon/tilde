@@ -28,18 +28,32 @@ flight_path_t begin_flight_path(const linalg::vec3f& position, const linalg::vec
   return path;
 }
 
+std::optional<linalg::vec3f> try_next_flight_path_vertex(const linalg::vec3f& last_vertex,
+                                                         const linalg::vec3f& heading_at_last_vertex,
+                                                         const flight_path_rule_t& rule,
+                                                         const linalg::vec3f& position,
+                                                         const linalg::vec3f& heading)
+{
+  const float distance = linalg::length(position - last_vertex);
+  if (distance < rule.shortest_segment)
+    return std::nullopt;
+
+  const bool turned = degrees_between(heading_at_last_vertex, heading) > rule.turn_degrees;
+  if (!turned && distance < rule.longest_segment)
+    return std::nullopt;
+
+  return position;
+}
+
 void record_flight_path(flight_path_t& path, const flight_path_settings_t& settings,
                         const linalg::vec3f& position, const linalg::vec3f& heading)
 {
-  const float distance = linalg::length(position - path.vertices.back());
-  if (distance < settings.shortest_segment)
+  const std::optional<linalg::vec3f> next =
+      try_next_flight_path_vertex(path.vertices.back(), path.heading_at_last_vertex, settings.rule, position, heading);
+  if (!next)
     return;
 
-  const bool turned = degrees_between(path.heading_at_last_vertex, heading) > settings.turn_degrees;
-  if (!turned && distance < settings.longest_segment)
-    return;
-
-  path.vertices.push_back(position);
+  path.vertices.push_back(*next);
   path.heading_at_last_vertex = heading;
 }
 

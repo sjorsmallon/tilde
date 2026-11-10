@@ -44,7 +44,7 @@ void serialize_entity(Bit_Writer& writer, const entities::Entity& entity,
         std::memcmp(entity_base + leaf.offset, baseline_base + leaf.offset,
                     leaf.info->size_in_bytes) == 0)
       continue;
-    write_field(writer, entity_base, *leaf.info, leaf.offset);
+    write_field(writer, entity_base, *leaf.info, leaf.offset, baseline_base);
   }
 }
 

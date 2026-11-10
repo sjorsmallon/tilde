@@ -9,9 +9,36 @@ namespace network
 {
 
 void write_field(Bit_Writer& writer, const uint8_t* base, const field_info_t& field,
-                 uint32_t offset)
+                 uint32_t offset, const uint8_t* baseline)
 {
   const uint8_t* bytes = base + offset;
+
+  if (field_is_list(field))
+  {
+    uint32_t count = 0;
+    std::memcpy(&count, bytes, sizeof(count));
+    write_var_uint(writer, count);
+
+    const uint8_t* baseline_bytes = baseline != nullptr ? baseline + offset : nullptr;
+    uint32_t       baseline_count = 0;
+    if (baseline_bytes != nullptr)
+      std::memcpy(&baseline_count, baseline_bytes, sizeof(baseline_count));
+
+    const field_info_t element  = list_element_row(field);
+    const uint32_t     compared = count < baseline_count ? count : baseline_count;
+    for (uint32_t index = 0; index < compared; ++index)
+    {
+      const uint32_t element_offset = list_element_offset(field, index);
+      const bool     changed        = std::memcmp(bytes + element_offset, baseline_bytes + element_offset,
+                                                  field.list.element_size_in_bytes) != 0;
+      writer.write_bit(changed);
+      if (changed)
+        write_field(writer, bytes, element, element_offset, nullptr);
+    }
+    for (uint32_t index = compared; index < count; ++index)
+      write_field(writer, bytes, element, list_element_offset(field, index), nullptr);
+    return;
+  }
 
   switch (field.type)
   {
@@ -162,6 +189,31 @@ void write_field(Bit_Writer& writer, const uint8_t* base, const field_info_t& fi
 bool read_field(Bit_Reader& reader, uint8_t* base, const field_info_t& field, uint32_t offset)
 {
   uint8_t* bytes = base + offset;
+
+  if (field_is_list(field))
+  {
+    const uint32_t count = read_var_uint(reader);
+    if (count > field.list.bound)
+    {
+      log_error("field wire: field {} carries {} elements, at most {} fit. "
+                "The sender disagrees with our tables, or the packet is corrupt.",
+                field.name, count, field.list.bound);
+      return false;
+    }
+    uint32_t baseline_count = 0;
+    std::memcpy(&baseline_count, bytes, sizeof(baseline_count));
+
+    const field_info_t element  = list_element_row(field);
+    const uint32_t     compared = count < baseline_count ? count : baseline_count;
+    for (uint32_t index = 0; index < compared; ++index)
+      if (reader.read_bit() && !read_field(reader, bytes, element, list_element_offset(field, index)))
+        return false;
+    for (uint32_t index = compared; index < count; ++index)
+      if (!read_field(reader, bytes, element, list_element_offset(field, index)))
+        return false;
+    std::memcpy(bytes, &count, sizeof(count));
+    return true;
+  }
 
   switch (field.type)
   {

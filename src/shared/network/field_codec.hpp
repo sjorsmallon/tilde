@@ -24,6 +24,11 @@
 //   quat               four RAW 32-bit floats
 //   f32_exact          one RAW 32-bit float
 //   v3_exact           three RAW 32-bit floats
+//   T<N>               write_var_uint over the count; then, per index the value
+//                      and the baseline both hold, one bit and the element when
+//                      it changed; then every element past the baseline's count.
+//                      No baseline is a baseline of count 0: the whole list.
+//                      count > N is refused on read
 //
 // Rounding is the default and RAW is asked for by TYPE, for one of two reasons.
 // `quat`: its components live in [-1, 1], so write_coord's 5-bit fraction is 3.6
@@ -47,8 +52,14 @@ namespace network
 // Writes the field at `base + offset`. FIELD_TYPE_COMPONENT is not a leaf and
 // an invalid tag is a generator bug; both fatal_error rather than write
 // nothing, since a silent skip desyncs every field after it.
+//
+// `baseline` is the same layout as `base`, or nullptr. Only a list reads it:
+// whether a scalar rides at all is its enclosing mask's business, but a list's
+// row is one mask bit, and the elements inside it are deltaed here against the
+// baseline's. The reader's target must BE that baseline, which is what the
+// entity delta already relies on (deserialize_snapshot seeds from it).
 void write_field(Bit_Writer& writer, const uint8_t* base, const field_info_t& field,
-                 uint32_t offset);
+                 uint32_t offset, const uint8_t* baseline);
 
 // Reads one field back into `base + offset`.
 //

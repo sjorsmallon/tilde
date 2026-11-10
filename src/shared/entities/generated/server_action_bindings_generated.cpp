@@ -395,6 +395,30 @@ void shim_player_entity_add_velocity(Entity& entity, const action_data_t& data, 
   add_velocity(self, data.as_add_velocity(), context);
 }
 
+void shim_player_entity_begin_dolly(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Player_Entity& self = *entity_as<Player_Entity>(&entity);
+  begin_dolly(self, data.as_begin_dolly(), context);
+}
+
+void shim_player_entity_end_dolly(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Player_Entity& self = *entity_as<Player_Entity>(&entity);
+  end_dolly(self, data.as_end_dolly(), context);
+}
+
+void shim_player_entity_begin_trail(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Player_Entity& self = *entity_as<Player_Entity>(&entity);
+  begin_trail(self, data.as_begin_trail(), context);
+}
+
+void shim_player_entity_end_trail(Entity& entity, const action_data_t& data, input_context_t& context)
+{
+  Player_Entity& self = *entity_as<Player_Entity>(&entity);
+  end_trail(self, data.as_end_trail(), context);
+}
+
 void shim_player_entity_grant_weapon(Entity& entity, const action_data_t& data, input_context_t& context)
 {
   Player_Entity& self = *entity_as<Player_Entity>(&entity);
@@ -515,6 +539,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     shim_player_entity_teleport,
     shim_player_entity_set_velocity,
     shim_player_entity_add_velocity,
+    shim_player_entity_begin_dolly,
+    shim_player_entity_end_dolly,
+    shim_player_entity_begin_trail,
+    shim_player_entity_end_trail,
     shim_player_entity_grant_weapon,
     shim_player_entity_take_weapon,
     shim_player_entity_set_respawn_point,
@@ -556,6 +584,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -590,6 +622,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -623,6 +659,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -656,6 +696,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -690,6 +734,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -723,6 +771,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -757,6 +809,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -790,6 +846,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -823,6 +883,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -857,6 +921,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -891,6 +959,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -924,6 +996,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -957,6 +1033,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -992,6 +1072,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -1026,6 +1110,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -1059,6 +1147,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -1092,6 +1184,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -1125,6 +1221,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -1158,6 +1258,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -1191,6 +1295,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -1224,6 +1332,10 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Teleport
     nullptr,   // Set_Velocity
     nullptr,   // Add_Velocity
+    nullptr,   // Begin_Dolly
+    nullptr,   // End_Dolly
+    nullptr,   // Begin_Trail
+    nullptr,   // End_Trail
     nullptr,   // Grant_Weapon
     nullptr,   // Take_Weapon
     nullptr,   // Set_Respawn_Point
@@ -1241,6 +1353,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
     nullptr,   // Go_To
     nullptr,   // Fire
   },
+  {},   // Trail_Entity
 };
 
 // The shared ACCEPTANCE mask and this table are two artifacts of one
@@ -1518,6 +1631,74 @@ void add_velocity(Entity& entity, const Add_Velocity_Data& payload, input_contex
 {
   if (!try_add_velocity(entity, payload, context))
     fatal_error("{} does not accept Add_Velocity", entity_info(entity.type).classname);
+}
+
+bool try_begin_dolly(Entity& entity, const Begin_Dolly_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Begin_Dolly];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void begin_dolly(Entity& entity, const Begin_Dolly_Data& payload, input_context_t& context)
+{
+  if (!try_begin_dolly(entity, payload, context))
+    fatal_error("{} does not accept Begin_Dolly", entity_info(entity.type).classname);
+}
+
+bool try_end_dolly(Entity& entity, const End_Dolly_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::End_Dolly];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void end_dolly(Entity& entity, const End_Dolly_Data& payload, input_context_t& context)
+{
+  if (!try_end_dolly(entity, payload, context))
+    fatal_error("{} does not accept End_Dolly", entity_info(entity.type).classname);
+}
+
+bool try_begin_trail(Entity& entity, const Begin_Trail_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::Begin_Trail];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void begin_trail(Entity& entity, const Begin_Trail_Data& payload, input_context_t& context)
+{
+  if (!try_begin_trail(entity, payload, context))
+    fatal_error("{} does not accept Begin_Trail", entity_info(entity.type).classname);
+}
+
+bool try_end_trail(Entity& entity, const End_Trail_Data& payload, input_context_t& context)
+{
+  if (entity.type <= entity_type::Invalid || (uint32_t)entity.type >= ENTITY_TYPE_COUNT)
+    return false;
+  const action_shim_fn shim = ACTION_DISPATCH[(uint16_t)entity.type][(uint16_t)entity_action::End_Trail];
+  if (shim == nullptr)
+    return false;
+  shim(entity, erase(payload), context);
+  return true;
+}
+
+void end_trail(Entity& entity, const End_Trail_Data& payload, input_context_t& context)
+{
+  if (!try_end_trail(entity, payload, context))
+    fatal_error("{} does not accept End_Trail", entity_info(entity.type).classname);
 }
 
 bool try_grant_weapon(Entity& entity, const Grant_Weapon_Data& payload, input_context_t& context)

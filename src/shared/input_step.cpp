@@ -107,8 +107,9 @@ static uint64_t button_for_trigger(entities::Fire_Trigger trigger)
   return Button::Fire;
 }
 
-// One trigger. A pilot's hands are on the rocket: a press lets go of it and nothing fires. Else
-// the row on the button acts at the press, or at the held repeat, behind its own gates.
+// One trigger. A pilot's hands are on the rocket: a press lets go of it and nothing fires. A dolly's
+// hands are on the rig: the buttons drive it inside player_move and nothing fires. Else the row on
+// the button acts at the press, or at the held repeat, behind its own gates.
 static void apply_trigger_to_player(const movement_settings_t& settings, const subtick_step_t& step,
                                     uint64_t pressed, subtick_time_t step_start,
                                     subtick_time_t step_end, float tick_dt,
@@ -125,6 +126,8 @@ static void apply_trigger_to_player(const movement_settings_t& settings, const s
       outcome.pilot_released = true;
     return;
   }
+  if (state.move.movement.active_override == entities::Movement_Override::Dolly)
+    return;
 
   inventory_state_t&         inventory = state.inventory;
   inventory_slot_state_t&    held      = inventory.slots[inventory.active_slot];

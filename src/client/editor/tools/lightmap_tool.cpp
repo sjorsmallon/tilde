@@ -109,8 +109,7 @@ void Lightmap_Tool::on_key_down(editor_context_t& ctx, const key_event_t& e) {}
 
 void Lightmap_Tool::rebuild_probe_preview(editor_context_t& ctx)
 {
-  probe_preview_grid =
-      shared::try_build_probe_grid(*ctx.map, settings.probe_spacing_in_world_units);
+  probe_preview_grid = shared::try_build_probe_grid(*ctx.map, settings.probe_spacing_in_world_units);
   probe_preview_inside.clear();
   probe_preview_inside_count = 0;
   capture_preview = {};

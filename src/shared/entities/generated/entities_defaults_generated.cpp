@@ -459,4 +459,14 @@ Projected_Image_Entity::Projected_Image_Entity()
   type = entity_type::Projected_Image_Entity;
 }
 
+Trail_Entity::Trail_Entity()
+  : owner_uid{},
+    born_tick{},
+    ended_tick{},
+    points{},
+    render({.mesh = assets::mesh_id("Box"), .color = {1.0f, 0.45f, 0.1f}})
+{
+  type = entity_type::Trail_Entity;
+}
+
 } // namespace entities

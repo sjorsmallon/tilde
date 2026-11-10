@@ -132,6 +132,13 @@ shared::entity_uid_t hovered_uid = 0;
                             const linalg::vec3& position);
   void settle_live_drag(editor_context_t& ctx);
 
+  // selection_tool_focus.cpp: Tab walks the selection one member at a time. The
+  // selection stays the group; the inspector and the outline read this one.
+  std::optional<shared::entity_uid_t> focused_uid{};
+  void cycle_focus(bool backwards);
+  void draw_inspector_of_selection(editor_context_t& ctx);
+  void draw_focus_outline(editor_context_t& ctx, draw_lists_t& draws);
+
   // clipboard.
   struct clipboard_t
   {

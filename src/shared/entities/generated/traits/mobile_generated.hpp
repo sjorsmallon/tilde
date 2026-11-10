@@ -51,6 +51,31 @@ struct Add_Velocity_Data
 static_assert(std::is_trivially_copyable_v<Add_Velocity_Data>,
               "a verb payload rides a union in a map row and a queue record");
 
+struct Begin_Dolly_Data
+{
+  float speed = {};
+};
+static_assert(std::is_trivially_copyable_v<Begin_Dolly_Data>,
+              "a verb payload rides a union in a map row and a queue record");
+
+struct End_Dolly_Data
+{
+};
+static_assert(std::is_trivially_copyable_v<End_Dolly_Data>,
+              "a verb payload rides a union in a map row and a queue record");
+
+struct Begin_Trail_Data
+{
+};
+static_assert(std::is_trivially_copyable_v<Begin_Trail_Data>,
+              "a verb payload rides a union in a map row and a queue record");
+
+struct End_Trail_Data
+{
+};
+static_assert(std::is_trivially_copyable_v<End_Trail_Data>,
+              "a verb payload rides a union in a map row and a queue record");
+
 // --- the dynamic half -----------------------------------------------
 //
 // Same spelling, resolved by overload: with a concrete type in hand the
@@ -63,5 +88,13 @@ void set_velocity(Entity&, const Set_Velocity_Data&, input_context_t&);
 [[nodiscard]] bool try_set_velocity(Entity&, const Set_Velocity_Data&, input_context_t&);
 void add_velocity(Entity&, const Add_Velocity_Data&, input_context_t&);
 [[nodiscard]] bool try_add_velocity(Entity&, const Add_Velocity_Data&, input_context_t&);
+void begin_dolly(Entity&, const Begin_Dolly_Data&, input_context_t&);
+[[nodiscard]] bool try_begin_dolly(Entity&, const Begin_Dolly_Data&, input_context_t&);
+void end_dolly(Entity&, const End_Dolly_Data&, input_context_t&);
+[[nodiscard]] bool try_end_dolly(Entity&, const End_Dolly_Data&, input_context_t&);
+void begin_trail(Entity&, const Begin_Trail_Data&, input_context_t&);
+[[nodiscard]] bool try_begin_trail(Entity&, const Begin_Trail_Data&, input_context_t&);
+void end_trail(Entity&, const End_Trail_Data&, input_context_t&);
+[[nodiscard]] bool try_end_trail(Entity&, const End_Trail_Data&, input_context_t&);
 
 } // namespace entities

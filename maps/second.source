@@ -51,6 +51,13 @@ connections
       "damage_type" "Normal"
     }
   }
+  connection
+  {
+    "sender" "7"
+    "signal" "Touched"
+    "target_kind" "Activator"
+    "action" "Begin_Trail"
+  }
 }
 mesh
 {
@@ -185,6 +192,7 @@ entity
   "switch_state.value" "true"
   "volume.position" "0 0 0"
   "volume.half_extents" "352 64 160"
+  "touched_by" "Anything"
 }
 entity
 {
@@ -200,6 +208,7 @@ entity
   "light.source_radius" "0"
   "light.casts_shadows" "true"
   "light.cuts_geometry" "false"
+  "light.solid_shadows" "None"
   "rides.mover" "0"
   "range" "512"
   "inner_degrees" "20"
@@ -247,4 +256,5 @@ entity
   "switch_state.value" "true"
   "volume.position" "0 0 0"
   "volume.half_extents" "64 64 64"
+  "touched_by" "Anything"
 }

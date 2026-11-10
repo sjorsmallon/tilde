@@ -51,3 +51,4 @@
 #include "entities/projector_entity_generated.hpp"
 #include "entities/projected_ball_entity_generated.hpp"
 #include "entities/projected_image_entity_generated.hpp"
+#include "entities/trail_entity_generated.hpp"

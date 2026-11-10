@@ -36,6 +36,7 @@
 #include "systems/respawn_system.hpp"
 #include "systems/timer_system.hpp"
 #include "systems/launcher_system.hpp"
+#include "systems/trail_system.hpp"
 #include "systems/trigger_system.hpp"
 #include "systems/weapon_emancipation_grill_system.hpp"
 #include "timed_function.hpp"
@@ -148,6 +149,9 @@ bool Tick()
     update_guided_rockets(context, tick_dt);
     update_ping_markers(context);
     update_launchers(context);
+    // After the inputs, so a trail grows from where its owner's step ended; before the respawns, so a death in a
+    // trail's wall is this tick's.
+    update_trails(context);
 
     // respawn runs after death so we can correctly set next ticks etc.
     update_respawns(context, context.tick_number,

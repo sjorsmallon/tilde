@@ -93,7 +93,7 @@ shared::move_state_t player_move(const shared::movement_settings_t& unmodified_s
   // rubber-bands them for a round trip, which is the problem prediction_def.md
   // §1 solved for pads.
   const shared::override_step_t over =
-      shared::step_override(settings, bvh, world, state, input, dt);
+      shared::step_override(settings, bvh, world, state, input, jump, dt);
 
   shared::settled_move_t settled;
   float                  stair_rise = 0.f;

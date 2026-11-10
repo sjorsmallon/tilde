@@ -63,6 +63,52 @@ inline Array<linalg::vec3, 8> get_oriented_box_corners(const oriented_box_t &box
   return corners;
 }
 
+inline oriented_box_t oriented_box_from_bounds(const aabb_bounds_t &bounds)
+{
+  return {.center       = (bounds.min + bounds.max) * 0.5f,
+          .half_extents = (bounds.max - bounds.min) * 0.5f,
+          .orientation  = linalg::quatf::identity()};
+}
+
+// The separating axis test over the fifteen axes two boxes can part along: each box's three face normals and
+// the nine cross products of their edges. A cross product of parallel edges is no axis and is skipped; the face
+// normals already cover that direction. Touching counts as intersecting.
+inline bool oriented_boxes_intersect(const oriented_box_t &a, const oriented_box_t &b)
+{
+  const Array<linalg::vec3, 3> a_axes = {{linalg::rotate(a.orientation, {1.f, 0.f, 0.f}),
+                                          linalg::rotate(a.orientation, {0.f, 1.f, 0.f}),
+                                          linalg::rotate(a.orientation, {0.f, 0.f, 1.f})}};
+  const Array<linalg::vec3, 3> b_axes = {{linalg::rotate(b.orientation, {1.f, 0.f, 0.f}),
+                                          linalg::rotate(b.orientation, {0.f, 1.f, 0.f}),
+                                          linalg::rotate(b.orientation, {0.f, 0.f, 1.f})}};
+  const linalg::vec3           between = b.center - a.center;
+
+  const auto separated_along = [&](const linalg::vec3 &axis) {
+    const float a_reach = std::abs(linalg::dot(axis, a_axes[0])) * a.half_extents.x +
+                          std::abs(linalg::dot(axis, a_axes[1])) * a.half_extents.y +
+                          std::abs(linalg::dot(axis, a_axes[2])) * a.half_extents.z;
+    const float b_reach = std::abs(linalg::dot(axis, b_axes[0])) * b.half_extents.x +
+                          std::abs(linalg::dot(axis, b_axes[1])) * b.half_extents.y +
+                          std::abs(linalg::dot(axis, b_axes[2])) * b.half_extents.z;
+    return std::abs(linalg::dot(axis, between)) > a_reach + b_reach;
+  };
+
+  constexpr float PARALLEL_EDGES = 1e-6f;
+  for (uint32_t index = 0; index < 3; ++index)
+    if (separated_along(a_axes[index]) || separated_along(b_axes[index]))
+      return false;
+  for (uint32_t a_index = 0; a_index < 3; ++a_index)
+    for (uint32_t b_index = 0; b_index < 3; ++b_index)
+    {
+      const linalg::vec3 axis = linalg::cross(a_axes[a_index], b_axes[b_index]);
+      if (linalg::length_squared(axis) < PARALLEL_EDGES)
+        continue;
+      if (separated_along(axis))
+        return false;
+    }
+  return true;
+}
+
 // The two conversions, named for the direction they already had elsewhere in
 // the codebase: get_bounds goes to min/max, to_aabb comes back.
 inline aabb_bounds_t get_bounds(const aabb_t &aabb)

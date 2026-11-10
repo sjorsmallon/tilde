@@ -22,7 +22,8 @@ constexpr field_info_t SET_COLOR_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t SET_CHARACTER_FIELDS[] = {
@@ -34,7 +35,8 @@ constexpr field_info_t SET_CHARACTER_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "row",
    .type = FIELD_TYPE_I32,
    .offset = (uint32_t)offsetof(Set_Character_Data, row),
@@ -43,7 +45,8 @@ constexpr field_info_t SET_CHARACTER_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "character",
    .type = FIELD_TYPE_I32,
    .offset = (uint32_t)offsetof(Set_Character_Data, character),
@@ -52,7 +55,8 @@ constexpr field_info_t SET_CHARACTER_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t ADD_FIELDS[] = {
@@ -64,7 +68,8 @@ constexpr field_info_t ADD_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t SET_HEALTH_FIELDS[] = {
@@ -76,7 +81,8 @@ constexpr field_info_t SET_HEALTH_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t DAMAGE_FIELDS[] = {
@@ -88,7 +94,8 @@ constexpr field_info_t DAMAGE_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t TELEPORT_FIELDS[] = {
@@ -100,7 +107,8 @@ constexpr field_info_t TELEPORT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "keep_velocity",
    .type = FIELD_TYPE_BOOL,
    .offset = (uint32_t)offsetof(Teleport_Data, keep_velocity),
@@ -109,7 +117,8 @@ constexpr field_info_t TELEPORT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t SET_VELOCITY_FIELDS[] = {
@@ -121,7 +130,8 @@ constexpr field_info_t SET_VELOCITY_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t ADD_VELOCITY_FIELDS[] = {
@@ -133,7 +143,21 @@ constexpr field_info_t ADD_VELOCITY_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
+};
+
+constexpr field_info_t BEGIN_DOLLY_FIELDS[] = {
+  {.name = "speed",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Begin_Dolly_Data, speed),
+   .size_in_bytes = (uint32_t)sizeof(Begin_Dolly_Data::speed),
+   .flags = 0u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t GRANT_WEAPON_FIELDS[] = {
@@ -145,7 +169,8 @@ constexpr field_info_t GRANT_WEAPON_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[2]},
+   .enum_info = &ENUM_INFOS[2],
+   .list = NOT_A_LIST},
   {.name = "damage_type",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Grant_Weapon_Data, damage_type),
@@ -154,7 +179,8 @@ constexpr field_info_t GRANT_WEAPON_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[6]},
+   .enum_info = &ENUM_INFOS[6],
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t TAKE_WEAPON_FIELDS[] = {
@@ -166,7 +192,8 @@ constexpr field_info_t TAKE_WEAPON_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[2]},
+   .enum_info = &ENUM_INFOS[2],
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t SET_RESPAWN_POINT_FIELDS[] = {
@@ -178,7 +205,8 @@ constexpr field_info_t SET_RESPAWN_POINT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t GO_TO_FIELDS[] = {
@@ -190,7 +218,8 @@ constexpr field_info_t GO_TO_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t COLOR_CHANGED_FIELDS[] = {
@@ -202,7 +231,8 @@ constexpr field_info_t COLOR_CHANGED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t DIED_FIELDS[] = {
@@ -214,7 +244,8 @@ constexpr field_info_t DIED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t HEALTH_CHANGED_FIELDS[] = {
@@ -226,7 +257,8 @@ constexpr field_info_t HEALTH_CHANGED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t ROUND_ENDED_FIELDS[] = {
@@ -238,7 +270,8 @@ constexpr field_info_t ROUND_ENDED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[15]},
+   .enum_info = &ENUM_INFOS[15],
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t NODE_REACHED_FIELDS[] = {
@@ -250,7 +283,8 @@ constexpr field_info_t NODE_REACHED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr Span<const field_info_t> ACTION_PAYLOAD_FIELDS[] = {
@@ -269,6 +303,10 @@ constexpr Span<const field_info_t> ACTION_PAYLOAD_FIELDS[] = {
   {TELEPORT_FIELDS, 2},
   {SET_VELOCITY_FIELDS, 1},
   {ADD_VELOCITY_FIELDS, 1},
+  {BEGIN_DOLLY_FIELDS, 1},
+  {},   // End_Dolly
+  {},   // Begin_Trail
+  {},   // End_Trail
   {GRANT_WEAPON_FIELDS, 2},
   {TAKE_WEAPON_FIELDS, 1},
   {SET_RESPAWN_POINT_FIELDS, 1},
@@ -324,6 +362,10 @@ const char* to_string(entity_action value)
     case entity_action::Teleport: return "Teleport";
     case entity_action::Set_Velocity: return "Set_Velocity";
     case entity_action::Add_Velocity: return "Add_Velocity";
+    case entity_action::Begin_Dolly: return "Begin_Dolly";
+    case entity_action::End_Dolly: return "End_Dolly";
+    case entity_action::Begin_Trail: return "Begin_Trail";
+    case entity_action::End_Trail: return "End_Trail";
     case entity_action::Grant_Weapon: return "Grant_Weapon";
     case entity_action::Take_Weapon: return "Take_Weapon";
     case entity_action::Set_Respawn_Point: return "Set_Respawn_Point";
@@ -361,6 +403,10 @@ template <> std::optional<entity_action> try_from_string<entity_action>(std::str
   if (text == "Teleport") return entity_action::Teleport;
   if (text == "Set_Velocity") return entity_action::Set_Velocity;
   if (text == "Add_Velocity") return entity_action::Add_Velocity;
+  if (text == "Begin_Dolly") return entity_action::Begin_Dolly;
+  if (text == "End_Dolly") return entity_action::End_Dolly;
+  if (text == "Begin_Trail") return entity_action::Begin_Trail;
+  if (text == "End_Trail") return entity_action::End_Trail;
   if (text == "Grant_Weapon") return entity_action::Grant_Weapon;
   if (text == "Take_Weapon") return entity_action::Take_Weapon;
   if (text == "Set_Respawn_Point") return entity_action::Set_Respawn_Point;
@@ -493,6 +539,10 @@ uint32_t action_payload_size(entity_action action)
     case entity_action::Teleport: return (uint32_t)sizeof(Teleport_Data);
     case entity_action::Set_Velocity: return (uint32_t)sizeof(Set_Velocity_Data);
     case entity_action::Add_Velocity: return (uint32_t)sizeof(Add_Velocity_Data);
+    case entity_action::Begin_Dolly: return (uint32_t)sizeof(Begin_Dolly_Data);
+    case entity_action::End_Dolly: return (uint32_t)sizeof(End_Dolly_Data);
+    case entity_action::Begin_Trail: return (uint32_t)sizeof(Begin_Trail_Data);
+    case entity_action::End_Trail: return (uint32_t)sizeof(End_Trail_Data);
     case entity_action::Grant_Weapon: return (uint32_t)sizeof(Grant_Weapon_Data);
     case entity_action::Take_Weapon: return (uint32_t)sizeof(Take_Weapon_Data);
     case entity_action::Set_Respawn_Point: return (uint32_t)sizeof(Set_Respawn_Point_Data);
@@ -651,6 +701,38 @@ action_data_t erase(const Add_Velocity_Data& payload)
   action_data_t data;
   data.tag = entity_action::Add_Velocity;
   data.add_velocity = payload;
+  return data;
+}
+
+action_data_t erase(const Begin_Dolly_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Begin_Dolly;
+  data.begin_dolly = payload;
+  return data;
+}
+
+action_data_t erase(const End_Dolly_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::End_Dolly;
+  data.end_dolly = payload;
+  return data;
+}
+
+action_data_t erase(const Begin_Trail_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::Begin_Trail;
+  data.begin_trail = payload;
+  return data;
+}
+
+action_data_t erase(const End_Trail_Data& payload)
+{
+  action_data_t data;
+  data.tag = entity_action::End_Trail;
+  data.end_trail = payload;
   return data;
 }
 

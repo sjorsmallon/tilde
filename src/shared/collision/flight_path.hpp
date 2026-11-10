@@ -1,24 +1,32 @@
 #pragma once
 
 // The path a piloted rocket leaves (guided_rocket_plan.md step 2): a polyline recorded while it flies,
-// and the oriented boxes its edges become when the flight ends.
+// and the oriented boxes its edges become when the flight ends. The rule that lays the vertices is also
+// how a trail (trail.hpp) lays its points.
 
 #include "linalg.hpp"
 #include "span.hpp"
 
+#include <optional>
 #include <vector>
 
 namespace shared
 {
 
-struct flight_path_settings_t
+// When a moving thing's position becomes the next vertex of its path.
+struct flight_path_rule_t
 {
   // A vertex is laid when the heading has turned this far since the last one,
   float turn_degrees;
   // but never closer to it than this,
   float shortest_segment;
-  // and always once the rocket is this far from it.
+  // and always once the thing is this far from it.
   float longest_segment;
+};
+
+struct flight_path_settings_t
+{
+  flight_path_rule_t rule;
   // How far each segment reaches past its end, so a bend leaves no gap on its outside.
   float joint_overlap;
   // How far below the rocket's line the segments lie.
@@ -45,6 +53,13 @@ struct flight_path_segment_t
   float         half_width;
   linalg::vec3f color;
 };
+
+// `position` as the next vertex after `last_vertex` when the rule says so, else empty. Both headings are
+// normalized.
+[[nodiscard]] std::optional<linalg::vec3f>
+try_next_flight_path_vertex(const linalg::vec3f& last_vertex, const linalg::vec3f& heading_at_last_vertex,
+                            const flight_path_rule_t& rule, const linalg::vec3f& position,
+                            const linalg::vec3f& heading);
 
 [[nodiscard]] flight_path_t begin_flight_path(const linalg::vec3f& position, const linalg::vec3f& heading);
 

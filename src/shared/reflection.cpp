@@ -179,6 +179,30 @@ std::string format_float_components(const float* values, int32_t count)
 
 bool field_to_text(const void* field_bytes, const field_info_t& field, std::string& out_text)
 {
+  if (field_is_list(field))
+  {
+    const uint8_t* bytes = static_cast<const uint8_t*>(field_bytes);
+    uint32_t       count = 0;
+    std::memcpy(&count, bytes, sizeof(count));
+    if (count > field.list.bound)
+      count = field.list.bound;
+
+    const field_info_t element = list_element_row(field);
+    std::string        text   = "[";
+    for (uint32_t index = 0; index < count; ++index)
+    {
+      std::string element_text;
+      if (!field_to_text(bytes + list_element_offset(field, index), element, element_text))
+        return false;
+      if (index > 0)
+        text += ", ";
+      text += element_text;
+    }
+    text += "]";
+    out_text = std::move(text);
+    return true;
+  }
+
   switch (field.type)
   {
     case FIELD_TYPE_F32:
@@ -290,6 +314,9 @@ bool field_to_text(const void* field_bytes, const field_info_t& field, std::stri
 
 bool field_from_text(const std::string& text, const field_info_t& field, void* field_bytes)
 {
+  if (field_is_list(field))
+    return false;
+
   if (field_type_is_signed_integer(field.type) || field_type_is_unsigned_integer(field.type))
   {
     int64_t value = 0;

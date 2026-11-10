@@ -52,7 +52,8 @@ constexpr field_info_t EFFECT_SITE_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "normal",
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Effect_Site, normal),
@@ -61,7 +62,8 @@ constexpr field_info_t EFFECT_SITE_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "color",
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Effect_Site, color),
@@ -70,7 +72,8 @@ constexpr field_info_t EFFECT_SITE_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "scale",
    .type = FIELD_TYPE_F32,
    .offset = (uint32_t)offsetof(Effect_Site, scale),
@@ -79,7 +82,8 @@ constexpr field_info_t EFFECT_SITE_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "attached_entity",
    .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Effect_Site, attached_entity),
@@ -88,7 +92,8 @@ constexpr field_info_t EFFECT_SITE_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "surface_material",
    .type = FIELD_TYPE_U16,
    .offset = (uint32_t)offsetof(Effect_Site, surface_material),
@@ -97,7 +102,8 @@ constexpr field_info_t EFFECT_SITE_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t SERVER_MAP_FIELDS[] = {
@@ -109,7 +115,8 @@ constexpr field_info_t SERVER_MAP_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "path",
    .type = FIELD_TYPE_STRING,
    .offset = (uint32_t)offsetof(Server_Map, path),
@@ -118,7 +125,8 @@ constexpr field_info_t SERVER_MAP_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = 128,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "name",
    .type = FIELD_TYPE_STRING,
    .offset = (uint32_t)offsetof(Server_Map, name),
@@ -127,7 +135,8 @@ constexpr field_info_t SERVER_MAP_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = 64,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "content_hash",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Server_Map, content_hash),
@@ -136,7 +145,8 @@ constexpr field_info_t SERVER_MAP_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t CVAR_VALUE_FIELDS[] = {
@@ -148,7 +158,8 @@ constexpr field_info_t CVAR_VALUE_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "text",
    .type = FIELD_TYPE_STRING,
    .offset = (uint32_t)offsetof(Cvar_Value, text),
@@ -157,7 +168,8 @@ constexpr field_info_t CVAR_VALUE_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = 64,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t VIEW_FIELDS[] = {
@@ -169,7 +181,8 @@ constexpr field_info_t VIEW_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "pitch",
    .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(View, pitch),
@@ -178,7 +191,8 @@ constexpr field_info_t VIEW_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t BUTTON_CHANGE_FIELDS[] = {
@@ -190,7 +204,8 @@ constexpr field_info_t BUTTON_CHANGE_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "buttons_after",
    .type = FIELD_TYPE_U64,
    .offset = (uint32_t)offsetof(Button_Change, buttons_after),
@@ -199,7 +214,8 @@ constexpr field_info_t BUTTON_CHANGE_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t TICK_INPUT_FIELDS[] = {
@@ -211,7 +227,8 @@ constexpr field_info_t TICK_INPUT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t SHOT_DEBUG_TARGET_FIELDS[] = {
@@ -223,7 +240,8 @@ constexpr field_info_t SHOT_DEBUG_TARGET_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "feet_position",
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Shot_Debug_Target, feet_position),
@@ -232,7 +250,8 @@ constexpr field_info_t SHOT_DEBUG_TARGET_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "body_yaw",
    .type = FIELD_TYPE_F32,
    .offset = (uint32_t)offsetof(Shot_Debug_Target, body_yaw),
@@ -241,7 +260,8 @@ constexpr field_info_t SHOT_DEBUG_TARGET_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "view_yaw",
    .type = FIELD_TYPE_F32,
    .offset = (uint32_t)offsetof(Shot_Debug_Target, view_yaw),
@@ -250,7 +270,8 @@ constexpr field_info_t SHOT_DEBUG_TARGET_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "view_pitch",
    .type = FIELD_TYPE_F32,
    .offset = (uint32_t)offsetof(Shot_Debug_Target, view_pitch),
@@ -259,7 +280,8 @@ constexpr field_info_t SHOT_DEBUG_TARGET_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t BOT_DEBUG_ENTRY_FIELDS[] = {
@@ -271,7 +293,8 @@ constexpr field_info_t BOT_DEBUG_ENTRY_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "goal",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Bot_Debug_Entry, goal),
@@ -280,7 +303,8 @@ constexpr field_info_t BOT_DEBUG_ENTRY_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[1]},
+   .enum_info = &ENUM_INFOS[1],
+   .list = NOT_A_LIST},
   {.name = "behavior",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Bot_Debug_Entry, behavior),
@@ -289,7 +313,8 @@ constexpr field_info_t BOT_DEBUG_ENTRY_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[2]},
+   .enum_info = &ENUM_INFOS[2],
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t BOT_DEBUG_ENTRY_PATH_ELEMENT[] = {
@@ -301,7 +326,8 @@ constexpr field_info_t BOT_DEBUG_ENTRY_PATH_ELEMENT[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t ROCKET_DETONATED_FIELDS[] = {
@@ -313,7 +339,8 @@ constexpr field_info_t ROCKET_DETONATED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "victim_id",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Rocket_Detonated, victim_id),
@@ -322,7 +349,8 @@ constexpr field_info_t ROCKET_DETONATED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "weapon_id",
    .type = FIELD_TYPE_U16,
    .offset = (uint32_t)offsetof(Rocket_Detonated, weapon_id),
@@ -331,7 +359,8 @@ constexpr field_info_t ROCKET_DETONATED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t PLAYER_DIED_FIELDS[] = {
@@ -343,7 +372,8 @@ constexpr field_info_t PLAYER_DIED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "attacker_id",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Player_Died, attacker_id),
@@ -352,7 +382,8 @@ constexpr field_info_t PLAYER_DIED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "weapon_id",
    .type = FIELD_TYPE_U16,
    .offset = (uint32_t)offsetof(Player_Died, weapon_id),
@@ -361,7 +392,8 @@ constexpr field_info_t PLAYER_DIED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "was_headshot",
    .type = FIELD_TYPE_BOOL,
    .offset = (uint32_t)offsetof(Player_Died, was_headshot),
@@ -370,7 +402,8 @@ constexpr field_info_t PLAYER_DIED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t PLAYER_SPAWNED_FIELDS[] = {
@@ -382,7 +415,8 @@ constexpr field_info_t PLAYER_SPAWNED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "client_slot",
    .type = FIELD_TYPE_I32,
    .offset = (uint32_t)offsetof(Player_Spawned, client_slot),
@@ -391,7 +425,8 @@ constexpr field_info_t PLAYER_SPAWNED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "spawn_position",
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Player_Spawned, spawn_position),
@@ -400,7 +435,8 @@ constexpr field_info_t PLAYER_SPAWNED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "spawn_orientation",
    .type = FIELD_TYPE_QUAT,
    .offset = (uint32_t)offsetof(Player_Spawned, spawn_orientation),
@@ -409,7 +445,8 @@ constexpr field_info_t PLAYER_SPAWNED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t OBJECTIVE_REACHED_FIELDS[] = {
@@ -421,7 +458,8 @@ constexpr field_info_t OBJECTIVE_REACHED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "attempt_ticks",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Objective_Reached, attempt_ticks),
@@ -430,7 +468,8 @@ constexpr field_info_t OBJECTIVE_REACHED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "best_ticks",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Objective_Reached, best_ticks),
@@ -439,7 +478,8 @@ constexpr field_info_t OBJECTIVE_REACHED_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t SHOT_IMPACT_FIELDS[] = {
@@ -451,7 +491,8 @@ constexpr field_info_t SHOT_IMPACT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &entities::ENUM_INFOS[(uint32_t)entities::enum_type::Hit_Region]},
+   .enum_info = &entities::ENUM_INFOS[(uint32_t)entities::enum_type::Hit_Region],
+   .list = NOT_A_LIST},
   {.name = "weapon",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Shot_Impact, weapon),
@@ -460,7 +501,8 @@ constexpr field_info_t SHOT_IMPACT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &entities::ENUM_INFOS[(uint32_t)entities::enum_type::Weapon]},
+   .enum_info = &entities::ENUM_INFOS[(uint32_t)entities::enum_type::Weapon],
+   .list = NOT_A_LIST},
   {.name = "trigger",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Shot_Impact, trigger),
@@ -469,7 +511,8 @@ constexpr field_info_t SHOT_IMPACT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &entities::ENUM_INFOS[(uint32_t)entities::enum_type::Fire_Trigger]},
+   .enum_info = &entities::ENUM_INFOS[(uint32_t)entities::enum_type::Fire_Trigger],
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t CONSOLE_LINE_FIELDS[] = {
@@ -481,7 +524,8 @@ constexpr field_info_t CONSOLE_LINE_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = 255,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t SERVER_TEXT_FIELDS[] = {
@@ -493,7 +537,8 @@ constexpr field_info_t SERVER_TEXT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = 255,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t CONNECT_FIELDS[] = {
@@ -505,7 +550,8 @@ constexpr field_info_t CONNECT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "player_name",
    .type = FIELD_TYPE_STRING,
    .offset = (uint32_t)offsetof(Connect, player_name),
@@ -514,7 +560,8 @@ constexpr field_info_t CONNECT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = 32,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "schema_hash",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Connect, schema_hash),
@@ -523,7 +570,8 @@ constexpr field_info_t CONNECT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "asset_table_hash",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Connect, asset_table_hash),
@@ -532,7 +580,8 @@ constexpr field_info_t CONNECT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t DISCONNECT_FIELDS[] = {
@@ -544,7 +593,8 @@ constexpr field_info_t DISCONNECT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = 64,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t ACCEPT_FIELDS[] = {
@@ -556,7 +606,8 @@ constexpr field_info_t ACCEPT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "server_tickrate",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Accept, server_tickrate),
@@ -565,7 +616,8 @@ constexpr field_info_t ACCEPT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t REJECT_FIELDS[] = {
@@ -577,7 +629,8 @@ constexpr field_info_t REJECT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = 255,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "server_schema_hash",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Reject, server_schema_hash),
@@ -586,7 +639,8 @@ constexpr field_info_t REJECT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "server_asset_table_hash",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Reject, server_asset_table_hash),
@@ -595,7 +649,8 @@ constexpr field_info_t REJECT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t MAP_DATA_REQUEST_FIELDS[] = {
@@ -607,7 +662,8 @@ constexpr field_info_t MAP_DATA_REQUEST_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "map_name",
    .type = FIELD_TYPE_STRING,
    .offset = (uint32_t)offsetof(Map_Data_Request, map_name),
@@ -616,7 +672,8 @@ constexpr field_info_t MAP_DATA_REQUEST_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = 64,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t GHOST_AVAILABLE_FIELDS[] = {
@@ -628,7 +685,8 @@ constexpr field_info_t GHOST_AVAILABLE_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "ghost_hash",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Ghost_Available, ghost_hash),
@@ -637,7 +695,8 @@ constexpr field_info_t GHOST_AVAILABLE_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "byte_count",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Ghost_Available, byte_count),
@@ -646,7 +705,8 @@ constexpr field_info_t GHOST_AVAILABLE_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t GHOST_REQUEST_FIELDS[] = {
@@ -658,7 +718,8 @@ constexpr field_info_t GHOST_REQUEST_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t CLIENT_INPUT_FIELDS[] = {
@@ -670,7 +731,8 @@ constexpr field_info_t CLIENT_INPUT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "held_snapshot_tick",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Client_Input, held_snapshot_tick),
@@ -679,7 +741,8 @@ constexpr field_info_t CLIENT_INPUT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "map_content_hash",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Client_Input, map_content_hash),
@@ -688,7 +751,8 @@ constexpr field_info_t CLIENT_INPUT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "interpolated_from_tick",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Client_Input, interpolated_from_tick),
@@ -697,7 +761,8 @@ constexpr field_info_t CLIENT_INPUT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "interpolated_towards_tick",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Client_Input, interpolated_towards_tick),
@@ -706,7 +771,8 @@ constexpr field_info_t CLIENT_INPUT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "interpolation_fraction",
    .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(Client_Input, interpolation_fraction),
@@ -715,7 +781,8 @@ constexpr field_info_t CLIENT_INPUT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "view_fov_degrees",
    .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(Client_Input, view_fov_degrees),
@@ -724,7 +791,8 @@ constexpr field_info_t CLIENT_INPUT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "view_aspect",
    .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(Client_Input, view_aspect),
@@ -733,7 +801,8 @@ constexpr field_info_t CLIENT_INPUT_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t ENTITY_PACKAGE_FIELDS[] = {
@@ -745,7 +814,8 @@ constexpr field_info_t ENTITY_PACKAGE_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "delta_from_tick",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Entity_Package, delta_from_tick),
@@ -754,7 +824,8 @@ constexpr field_info_t ENTITY_PACKAGE_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t SHOT_DEBUG_FIELDS[] = {
@@ -766,7 +837,8 @@ constexpr field_info_t SHOT_DEBUG_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "fire_subtick_slot",
    .type = FIELD_TYPE_U8,
    .offset = (uint32_t)offsetof(Shot_Debug, fire_subtick_slot),
@@ -775,7 +847,8 @@ constexpr field_info_t SHOT_DEBUG_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "eye",
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Shot_Debug, eye),
@@ -784,7 +857,8 @@ constexpr field_info_t SHOT_DEBUG_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "direction",
    .type = FIELD_TYPE_V3_EXACT,
    .offset = (uint32_t)offsetof(Shot_Debug, direction),
@@ -793,7 +867,8 @@ constexpr field_info_t SHOT_DEBUG_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "bracket_status",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Shot_Debug, bracket_status),
@@ -802,7 +877,8 @@ constexpr field_info_t SHOT_DEBUG_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &ENUM_INFOS[0]},
+   .enum_info = &ENUM_INFOS[0],
+   .list = NOT_A_LIST},
   {.name = "used_rewind",
    .type = FIELD_TYPE_BOOL,
    .offset = (uint32_t)offsetof(Shot_Debug, used_rewind),
@@ -811,7 +887,8 @@ constexpr field_info_t SHOT_DEBUG_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "requested_from_tick",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Shot_Debug, requested_from_tick),
@@ -820,7 +897,8 @@ constexpr field_info_t SHOT_DEBUG_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "requested_towards_tick",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Shot_Debug, requested_towards_tick),
@@ -829,7 +907,8 @@ constexpr field_info_t SHOT_DEBUG_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "requested_fraction",
    .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(Shot_Debug, requested_fraction),
@@ -838,7 +917,8 @@ constexpr field_info_t SHOT_DEBUG_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "used_from_tick",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Shot_Debug, used_from_tick),
@@ -847,7 +927,8 @@ constexpr field_info_t SHOT_DEBUG_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "used_towards_tick",
    .type = FIELD_TYPE_U32,
    .offset = (uint32_t)offsetof(Shot_Debug, used_towards_tick),
@@ -856,7 +937,8 @@ constexpr field_info_t SHOT_DEBUG_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "used_fraction",
    .type = FIELD_TYPE_F32_EXACT,
    .offset = (uint32_t)offsetof(Shot_Debug, used_fraction),
@@ -865,7 +947,8 @@ constexpr field_info_t SHOT_DEBUG_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "hit_uid",
    .type = FIELD_TYPE_ENTITY_UID,
    .offset = (uint32_t)offsetof(Shot_Debug, hit_uid),
@@ -874,7 +957,8 @@ constexpr field_info_t SHOT_DEBUG_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "hit_region",
    .type = FIELD_TYPE_ENUM,
    .offset = (uint32_t)offsetof(Shot_Debug, hit_region),
@@ -883,7 +967,8 @@ constexpr field_info_t SHOT_DEBUG_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = &entities::ENUM_INFOS[(uint32_t)entities::enum_type::Hit_Region]},
+   .enum_info = &entities::ENUM_INFOS[(uint32_t)entities::enum_type::Hit_Region],
+   .list = NOT_A_LIST},
   {.name = "impact_point",
    .type = FIELD_TYPE_V3,
    .offset = (uint32_t)offsetof(Shot_Debug, impact_point),
@@ -892,7 +977,8 @@ constexpr field_info_t SHOT_DEBUG_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "nearest_miss_distance",
    .type = FIELD_TYPE_F32,
    .offset = (uint32_t)offsetof(Shot_Debug, nearest_miss_distance),
@@ -901,7 +987,8 @@ constexpr field_info_t SHOT_DEBUG_FIELDS[] = {
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
-   .enum_info = NOT_AN_ENUM},
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 std::string leaf_text(const void* base, const field_info_t& field)
@@ -982,12 +1069,12 @@ template <> std::optional<Bot_Behavior> try_from_string<Bot_Behavior>(std::strin
 
 void write_effect_site(network::Bit_Writer& writer, const Effect_Site& value)
 {
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), EFFECT_SITE_FIELDS[0], EFFECT_SITE_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), EFFECT_SITE_FIELDS[1], EFFECT_SITE_FIELDS[1].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), EFFECT_SITE_FIELDS[2], EFFECT_SITE_FIELDS[2].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), EFFECT_SITE_FIELDS[3], EFFECT_SITE_FIELDS[3].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), EFFECT_SITE_FIELDS[4], EFFECT_SITE_FIELDS[4].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), EFFECT_SITE_FIELDS[5], EFFECT_SITE_FIELDS[5].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), EFFECT_SITE_FIELDS[0], EFFECT_SITE_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), EFFECT_SITE_FIELDS[1], EFFECT_SITE_FIELDS[1].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), EFFECT_SITE_FIELDS[2], EFFECT_SITE_FIELDS[2].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), EFFECT_SITE_FIELDS[3], EFFECT_SITE_FIELDS[3].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), EFFECT_SITE_FIELDS[4], EFFECT_SITE_FIELDS[4].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), EFFECT_SITE_FIELDS[5], EFFECT_SITE_FIELDS[5].offset, nullptr);
 }
 
 std::optional<Effect_Site> try_read_effect_site(network::Bit_Reader& reader)
@@ -1029,10 +1116,10 @@ std::string to_text(const Effect_Site& value)
 
 void write_server_map(network::Bit_Writer& writer, const Server_Map& value)
 {
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SERVER_MAP_FIELDS[0], SERVER_MAP_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SERVER_MAP_FIELDS[1], SERVER_MAP_FIELDS[1].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SERVER_MAP_FIELDS[2], SERVER_MAP_FIELDS[2].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SERVER_MAP_FIELDS[3], SERVER_MAP_FIELDS[3].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SERVER_MAP_FIELDS[0], SERVER_MAP_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SERVER_MAP_FIELDS[1], SERVER_MAP_FIELDS[1].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SERVER_MAP_FIELDS[2], SERVER_MAP_FIELDS[2].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SERVER_MAP_FIELDS[3], SERVER_MAP_FIELDS[3].offset, nullptr);
 }
 
 std::optional<Server_Map> try_read_server_map(network::Bit_Reader& reader)
@@ -1066,8 +1153,8 @@ std::string to_text(const Server_Map& value)
 
 void write_cvar_value(network::Bit_Writer& writer, const Cvar_Value& value)
 {
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CVAR_VALUE_FIELDS[0], CVAR_VALUE_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CVAR_VALUE_FIELDS[1], CVAR_VALUE_FIELDS[1].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CVAR_VALUE_FIELDS[0], CVAR_VALUE_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CVAR_VALUE_FIELDS[1], CVAR_VALUE_FIELDS[1].offset, nullptr);
 }
 
 std::optional<Cvar_Value> try_read_cvar_value(network::Bit_Reader& reader)
@@ -1093,8 +1180,8 @@ std::string to_text(const Cvar_Value& value)
 
 void write_view(network::Bit_Writer& writer, const View& value)
 {
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), VIEW_FIELDS[0], VIEW_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), VIEW_FIELDS[1], VIEW_FIELDS[1].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), VIEW_FIELDS[0], VIEW_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), VIEW_FIELDS[1], VIEW_FIELDS[1].offset, nullptr);
 }
 
 std::optional<View> try_read_view(network::Bit_Reader& reader)
@@ -1120,8 +1207,8 @@ std::string to_text(const View& value)
 
 void write_button_change(network::Bit_Writer& writer, const Button_Change& value)
 {
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), BUTTON_CHANGE_FIELDS[0], BUTTON_CHANGE_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), BUTTON_CHANGE_FIELDS[1], BUTTON_CHANGE_FIELDS[1].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), BUTTON_CHANGE_FIELDS[0], BUTTON_CHANGE_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), BUTTON_CHANGE_FIELDS[1], BUTTON_CHANGE_FIELDS[1].offset, nullptr);
   write_view(writer, value.view_after);
 }
 
@@ -1156,7 +1243,7 @@ std::string to_text(const Button_Change& value)
 
 void write_tick_input(network::Bit_Writer& writer, const Tick_Input& value)
 {
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), TICK_INPUT_FIELDS[0], TICK_INPUT_FIELDS[0].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), TICK_INPUT_FIELDS[0], TICK_INPUT_FIELDS[0].offset, nullptr);
   write_view(writer, value.view_at_start);
   write_view(writer, value.view_at_end);
   network::write_var_uint(writer, value.button_changes.count);
@@ -1223,11 +1310,11 @@ std::string to_text(const Tick_Input& value)
 
 void write_shot_debug_target(network::Bit_Writer& writer, const Shot_Debug_Target& value)
 {
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_TARGET_FIELDS[0], SHOT_DEBUG_TARGET_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_TARGET_FIELDS[1], SHOT_DEBUG_TARGET_FIELDS[1].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_TARGET_FIELDS[2], SHOT_DEBUG_TARGET_FIELDS[2].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_TARGET_FIELDS[3], SHOT_DEBUG_TARGET_FIELDS[3].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_TARGET_FIELDS[4], SHOT_DEBUG_TARGET_FIELDS[4].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_TARGET_FIELDS[0], SHOT_DEBUG_TARGET_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_TARGET_FIELDS[1], SHOT_DEBUG_TARGET_FIELDS[1].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_TARGET_FIELDS[2], SHOT_DEBUG_TARGET_FIELDS[2].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_TARGET_FIELDS[3], SHOT_DEBUG_TARGET_FIELDS[3].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_TARGET_FIELDS[4], SHOT_DEBUG_TARGET_FIELDS[4].offset, nullptr);
 }
 
 std::optional<Shot_Debug_Target> try_read_shot_debug_target(network::Bit_Reader& reader)
@@ -1265,12 +1352,12 @@ std::string to_text(const Shot_Debug_Target& value)
 
 void write_bot_debug_entry(network::Bit_Writer& writer, const Bot_Debug_Entry& value)
 {
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), BOT_DEBUG_ENTRY_FIELDS[0], BOT_DEBUG_ENTRY_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), BOT_DEBUG_ENTRY_FIELDS[1], BOT_DEBUG_ENTRY_FIELDS[1].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), BOT_DEBUG_ENTRY_FIELDS[2], BOT_DEBUG_ENTRY_FIELDS[2].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), BOT_DEBUG_ENTRY_FIELDS[0], BOT_DEBUG_ENTRY_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), BOT_DEBUG_ENTRY_FIELDS[1], BOT_DEBUG_ENTRY_FIELDS[1].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), BOT_DEBUG_ENTRY_FIELDS[2], BOT_DEBUG_ENTRY_FIELDS[2].offset, nullptr);
   network::write_var_uint(writer, value.path.count);
   for (uint32_t index = 0; index < value.path.count; ++index)
-    network::write_field(writer, reinterpret_cast<const uint8_t*>(&value.path.elements[index]), BOT_DEBUG_ENTRY_PATH_ELEMENT[0], 0);
+    network::write_field(writer, reinterpret_cast<const uint8_t*>(&value.path.elements[index]), BOT_DEBUG_ENTRY_PATH_ELEMENT[0], 0, nullptr);
 }
 
 std::optional<Bot_Debug_Entry> try_read_bot_debug_entry(network::Bit_Reader& reader)
@@ -1395,9 +1482,9 @@ void write_rocket_detonated(reliable_stream_t& reliable, const Rocket_Detonated&
   message_stream_t& stream = reliable.records;
   network::Bit_Writer& writer = stream.writer;
   stream.begin_record((uint32_t)Message_Type::Rocket_Detonated);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), ROCKET_DETONATED_FIELDS[0], ROCKET_DETONATED_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), ROCKET_DETONATED_FIELDS[1], ROCKET_DETONATED_FIELDS[1].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), ROCKET_DETONATED_FIELDS[2], ROCKET_DETONATED_FIELDS[2].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), ROCKET_DETONATED_FIELDS[0], ROCKET_DETONATED_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), ROCKET_DETONATED_FIELDS[1], ROCKET_DETONATED_FIELDS[1].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), ROCKET_DETONATED_FIELDS[2], ROCKET_DETONATED_FIELDS[2].offset, nullptr);
   ++stream.count;
 
   if (stream.log_fired)
@@ -1434,10 +1521,10 @@ void write_player_died(reliable_stream_t& reliable, const Player_Died& value)
   message_stream_t& stream = reliable.records;
   network::Bit_Writer& writer = stream.writer;
   stream.begin_record((uint32_t)Message_Type::Player_Died);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), PLAYER_DIED_FIELDS[0], PLAYER_DIED_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), PLAYER_DIED_FIELDS[1], PLAYER_DIED_FIELDS[1].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), PLAYER_DIED_FIELDS[2], PLAYER_DIED_FIELDS[2].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), PLAYER_DIED_FIELDS[3], PLAYER_DIED_FIELDS[3].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), PLAYER_DIED_FIELDS[0], PLAYER_DIED_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), PLAYER_DIED_FIELDS[1], PLAYER_DIED_FIELDS[1].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), PLAYER_DIED_FIELDS[2], PLAYER_DIED_FIELDS[2].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), PLAYER_DIED_FIELDS[3], PLAYER_DIED_FIELDS[3].offset, nullptr);
   ++stream.count;
 
   if (stream.log_fired)
@@ -1478,10 +1565,10 @@ void write_player_spawned(reliable_stream_t& reliable, const Player_Spawned& val
   message_stream_t& stream = reliable.records;
   network::Bit_Writer& writer = stream.writer;
   stream.begin_record((uint32_t)Message_Type::Player_Spawned);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), PLAYER_SPAWNED_FIELDS[0], PLAYER_SPAWNED_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), PLAYER_SPAWNED_FIELDS[1], PLAYER_SPAWNED_FIELDS[1].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), PLAYER_SPAWNED_FIELDS[2], PLAYER_SPAWNED_FIELDS[2].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), PLAYER_SPAWNED_FIELDS[3], PLAYER_SPAWNED_FIELDS[3].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), PLAYER_SPAWNED_FIELDS[0], PLAYER_SPAWNED_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), PLAYER_SPAWNED_FIELDS[1], PLAYER_SPAWNED_FIELDS[1].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), PLAYER_SPAWNED_FIELDS[2], PLAYER_SPAWNED_FIELDS[2].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), PLAYER_SPAWNED_FIELDS[3], PLAYER_SPAWNED_FIELDS[3].offset, nullptr);
   ++stream.count;
 
   if (stream.log_fired)
@@ -1522,9 +1609,9 @@ void write_objective_reached(reliable_stream_t& reliable, const Objective_Reache
   message_stream_t& stream = reliable.records;
   network::Bit_Writer& writer = stream.writer;
   stream.begin_record((uint32_t)Message_Type::Objective_Reached);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), OBJECTIVE_REACHED_FIELDS[0], OBJECTIVE_REACHED_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), OBJECTIVE_REACHED_FIELDS[1], OBJECTIVE_REACHED_FIELDS[1].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), OBJECTIVE_REACHED_FIELDS[2], OBJECTIVE_REACHED_FIELDS[2].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), OBJECTIVE_REACHED_FIELDS[0], OBJECTIVE_REACHED_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), OBJECTIVE_REACHED_FIELDS[1], OBJECTIVE_REACHED_FIELDS[1].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), OBJECTIVE_REACHED_FIELDS[2], OBJECTIVE_REACHED_FIELDS[2].offset, nullptr);
   ++stream.count;
 
   if (stream.log_fired)
@@ -1689,9 +1776,9 @@ void write_shot_impact(message_stream_t& stream, const Shot_Impact& value)
   network::Bit_Writer& writer = stream.writer;
   stream.begin_record((uint32_t)Message_Type::Shot_Impact);
   write_effect_site(writer, value.site);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_IMPACT_FIELDS[0], SHOT_IMPACT_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_IMPACT_FIELDS[1], SHOT_IMPACT_FIELDS[1].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_IMPACT_FIELDS[2], SHOT_IMPACT_FIELDS[2].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_IMPACT_FIELDS[0], SHOT_IMPACT_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_IMPACT_FIELDS[1], SHOT_IMPACT_FIELDS[1].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_IMPACT_FIELDS[2], SHOT_IMPACT_FIELDS[2].offset, nullptr);
   ++stream.count;
 
   if (stream.log_fired)
@@ -1832,7 +1919,7 @@ void write_console_line(reliable_stream_t& reliable, const Console_Line& value)
   message_stream_t& stream = reliable.records;
   network::Bit_Writer& writer = stream.writer;
   stream.begin_record((uint32_t)Message_Type::Console_Line);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CONSOLE_LINE_FIELDS[0], CONSOLE_LINE_FIELDS[0].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CONSOLE_LINE_FIELDS[0], CONSOLE_LINE_FIELDS[0].offset, nullptr);
   ++stream.count;
 
   if (stream.log_fired)
@@ -1861,7 +1948,7 @@ void write_server_text(reliable_stream_t& reliable, const Server_Text& value)
   message_stream_t& stream = reliable.records;
   network::Bit_Writer& writer = stream.writer;
   stream.begin_record((uint32_t)Message_Type::Server_Text);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SERVER_TEXT_FIELDS[0], SERVER_TEXT_FIELDS[0].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SERVER_TEXT_FIELDS[0], SERVER_TEXT_FIELDS[0].offset, nullptr);
   ++stream.count;
 
   if (stream.log_fired)
@@ -1889,10 +1976,10 @@ void write_connect(message_stream_t& stream, const Connect& value)
 {
   network::Bit_Writer& writer = stream.writer;
   stream.begin_record((uint32_t)Message_Type::Connect);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CONNECT_FIELDS[0], CONNECT_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CONNECT_FIELDS[1], CONNECT_FIELDS[1].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CONNECT_FIELDS[2], CONNECT_FIELDS[2].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CONNECT_FIELDS[3], CONNECT_FIELDS[3].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CONNECT_FIELDS[0], CONNECT_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CONNECT_FIELDS[1], CONNECT_FIELDS[1].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CONNECT_FIELDS[2], CONNECT_FIELDS[2].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CONNECT_FIELDS[3], CONNECT_FIELDS[3].offset, nullptr);
   ++stream.count;
 
   if (stream.log_fired)
@@ -1932,7 +2019,7 @@ void write_disconnect(message_stream_t& stream, const Disconnect& value)
 {
   network::Bit_Writer& writer = stream.writer;
   stream.begin_record((uint32_t)Message_Type::Disconnect);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), DISCONNECT_FIELDS[0], DISCONNECT_FIELDS[0].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), DISCONNECT_FIELDS[0], DISCONNECT_FIELDS[0].offset, nullptr);
   ++stream.count;
 
   if (stream.log_fired)
@@ -1960,8 +2047,8 @@ void write_accept(message_stream_t& stream, const Accept& value)
 {
   network::Bit_Writer& writer = stream.writer;
   stream.begin_record((uint32_t)Message_Type::Accept);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), ACCEPT_FIELDS[0], ACCEPT_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), ACCEPT_FIELDS[1], ACCEPT_FIELDS[1].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), ACCEPT_FIELDS[0], ACCEPT_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), ACCEPT_FIELDS[1], ACCEPT_FIELDS[1].offset, nullptr);
   write_server_map(writer, value.map);
   ++stream.count;
 
@@ -2002,9 +2089,9 @@ void write_reject(message_stream_t& stream, const Reject& value)
 {
   network::Bit_Writer& writer = stream.writer;
   stream.begin_record((uint32_t)Message_Type::Reject);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), REJECT_FIELDS[0], REJECT_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), REJECT_FIELDS[1], REJECT_FIELDS[1].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), REJECT_FIELDS[2], REJECT_FIELDS[2].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), REJECT_FIELDS[0], REJECT_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), REJECT_FIELDS[1], REJECT_FIELDS[1].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), REJECT_FIELDS[2], REJECT_FIELDS[2].offset, nullptr);
   ++stream.count;
 
   if (stream.log_fired)
@@ -2125,8 +2212,8 @@ void write_map_data_request(reliable_stream_t& reliable, const Map_Data_Request&
   message_stream_t& stream = reliable.records;
   network::Bit_Writer& writer = stream.writer;
   stream.begin_record((uint32_t)Message_Type::Map_Data_Request);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), MAP_DATA_REQUEST_FIELDS[0], MAP_DATA_REQUEST_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), MAP_DATA_REQUEST_FIELDS[1], MAP_DATA_REQUEST_FIELDS[1].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), MAP_DATA_REQUEST_FIELDS[0], MAP_DATA_REQUEST_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), MAP_DATA_REQUEST_FIELDS[1], MAP_DATA_REQUEST_FIELDS[1].offset, nullptr);
   ++stream.count;
 
   if (stream.log_fired)
@@ -2159,9 +2246,9 @@ void write_ghost_available(reliable_stream_t& reliable, const Ghost_Available& v
   message_stream_t& stream = reliable.records;
   network::Bit_Writer& writer = stream.writer;
   stream.begin_record((uint32_t)Message_Type::Ghost_Available);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), GHOST_AVAILABLE_FIELDS[0], GHOST_AVAILABLE_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), GHOST_AVAILABLE_FIELDS[1], GHOST_AVAILABLE_FIELDS[1].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), GHOST_AVAILABLE_FIELDS[2], GHOST_AVAILABLE_FIELDS[2].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), GHOST_AVAILABLE_FIELDS[0], GHOST_AVAILABLE_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), GHOST_AVAILABLE_FIELDS[1], GHOST_AVAILABLE_FIELDS[1].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), GHOST_AVAILABLE_FIELDS[2], GHOST_AVAILABLE_FIELDS[2].offset, nullptr);
   ++stream.count;
 
   if (stream.log_fired)
@@ -2198,7 +2285,7 @@ void write_ghost_request(reliable_stream_t& reliable, const Ghost_Request& value
   message_stream_t& stream = reliable.records;
   network::Bit_Writer& writer = stream.writer;
   stream.begin_record((uint32_t)Message_Type::Ghost_Request);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), GHOST_REQUEST_FIELDS[0], GHOST_REQUEST_FIELDS[0].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), GHOST_REQUEST_FIELDS[0], GHOST_REQUEST_FIELDS[0].offset, nullptr);
   ++stream.count;
 
   if (stream.log_fired)
@@ -2226,15 +2313,15 @@ void write_client_input(message_stream_t& stream, const Client_Input& value)
 {
   network::Bit_Writer& writer = stream.writer;
   stream.begin_record((uint32_t)Message_Type::Client_Input);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CLIENT_INPUT_FIELDS[0], CLIENT_INPUT_FIELDS[0].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CLIENT_INPUT_FIELDS[0], CLIENT_INPUT_FIELDS[0].offset, nullptr);
   write_tick_input(writer, value.input);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CLIENT_INPUT_FIELDS[1], CLIENT_INPUT_FIELDS[1].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CLIENT_INPUT_FIELDS[2], CLIENT_INPUT_FIELDS[2].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CLIENT_INPUT_FIELDS[3], CLIENT_INPUT_FIELDS[3].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CLIENT_INPUT_FIELDS[4], CLIENT_INPUT_FIELDS[4].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CLIENT_INPUT_FIELDS[5], CLIENT_INPUT_FIELDS[5].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CLIENT_INPUT_FIELDS[6], CLIENT_INPUT_FIELDS[6].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CLIENT_INPUT_FIELDS[7], CLIENT_INPUT_FIELDS[7].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CLIENT_INPUT_FIELDS[1], CLIENT_INPUT_FIELDS[1].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CLIENT_INPUT_FIELDS[2], CLIENT_INPUT_FIELDS[2].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CLIENT_INPUT_FIELDS[3], CLIENT_INPUT_FIELDS[3].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CLIENT_INPUT_FIELDS[4], CLIENT_INPUT_FIELDS[4].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CLIENT_INPUT_FIELDS[5], CLIENT_INPUT_FIELDS[5].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CLIENT_INPUT_FIELDS[6], CLIENT_INPUT_FIELDS[6].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), CLIENT_INPUT_FIELDS[7], CLIENT_INPUT_FIELDS[7].offset, nullptr);
   ++stream.count;
 
   if (stream.log_fired)
@@ -2298,8 +2385,8 @@ void write_entity_package(message_stream_t& stream, const Entity_Package& value)
 {
   network::Bit_Writer& writer = stream.writer;
   stream.begin_record((uint32_t)Message_Type::Entity_Package);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), ENTITY_PACKAGE_FIELDS[0], ENTITY_PACKAGE_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), ENTITY_PACKAGE_FIELDS[1], ENTITY_PACKAGE_FIELDS[1].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), ENTITY_PACKAGE_FIELDS[0], ENTITY_PACKAGE_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), ENTITY_PACKAGE_FIELDS[1], ENTITY_PACKAGE_FIELDS[1].offset, nullptr);
   writer.write_bits(value.entity_data.count, 32);
   writer.write_bytes(value.entity_data.data, value.entity_data.count);
   ++stream.count;
@@ -2344,25 +2431,25 @@ void write_shot_debug(message_stream_t& stream, const Shot_Debug& value)
 {
   network::Bit_Writer& writer = stream.writer;
   stream.begin_record((uint32_t)Message_Type::Shot_Debug);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[0], SHOT_DEBUG_FIELDS[0].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[1], SHOT_DEBUG_FIELDS[1].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[2], SHOT_DEBUG_FIELDS[2].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[3], SHOT_DEBUG_FIELDS[3].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[4], SHOT_DEBUG_FIELDS[4].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[5], SHOT_DEBUG_FIELDS[5].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[6], SHOT_DEBUG_FIELDS[6].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[7], SHOT_DEBUG_FIELDS[7].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[8], SHOT_DEBUG_FIELDS[8].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[9], SHOT_DEBUG_FIELDS[9].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[10], SHOT_DEBUG_FIELDS[10].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[11], SHOT_DEBUG_FIELDS[11].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[0], SHOT_DEBUG_FIELDS[0].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[1], SHOT_DEBUG_FIELDS[1].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[2], SHOT_DEBUG_FIELDS[2].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[3], SHOT_DEBUG_FIELDS[3].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[4], SHOT_DEBUG_FIELDS[4].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[5], SHOT_DEBUG_FIELDS[5].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[6], SHOT_DEBUG_FIELDS[6].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[7], SHOT_DEBUG_FIELDS[7].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[8], SHOT_DEBUG_FIELDS[8].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[9], SHOT_DEBUG_FIELDS[9].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[10], SHOT_DEBUG_FIELDS[10].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[11], SHOT_DEBUG_FIELDS[11].offset, nullptr);
   network::write_var_uint(writer, value.targets.count);
   for (uint32_t index = 0; index < value.targets.count; ++index)
     write_shot_debug_target(writer, value.targets.elements[index]);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[12], SHOT_DEBUG_FIELDS[12].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[13], SHOT_DEBUG_FIELDS[13].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[14], SHOT_DEBUG_FIELDS[14].offset);
-  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[15], SHOT_DEBUG_FIELDS[15].offset);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[12], SHOT_DEBUG_FIELDS[12].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[13], SHOT_DEBUG_FIELDS[13].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[14], SHOT_DEBUG_FIELDS[14].offset, nullptr);
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), SHOT_DEBUG_FIELDS[15], SHOT_DEBUG_FIELDS[15].offset, nullptr);
   ++stream.count;
 
   if (stream.log_fired)

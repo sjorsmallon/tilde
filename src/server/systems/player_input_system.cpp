@@ -203,17 +203,28 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
 
   const shared::movement_settings_t move_settings = shared::movement_settings_from_cvars(*context.cvars);
 
+  // Every hand's view is recorded before any body steps, so a steered body reads its hand's view of THIS
+  // tick whichever slot comes first; recorded in step order, the lower slot would steer a tick behind.
+  std::vector<std::pair<const received_client_input_t*, accepted_client_input_t>> accepted_inputs;
+  accepted_inputs.reserve(context.incoming.client_inputs.size());
   for (const received_client_input_t& received : context.incoming.client_inputs)
   {
-    const int32_t               client_slot = received.slot;
-    const shared::Client_Input& input       = received.input;
-    const std::optional<accepted_client_input_t> accepted = try_accept_client_input(context, client_slot, input);
+    const std::optional<accepted_client_input_t> accepted =
+        try_accept_client_input(context, received.slot, received.input);
     if (!accepted)
       continue;
+    context.clients[received.slot].latest_view = accepted->tick_input.view_at_end;
+    accepted_inputs.emplace_back(&received, *accepted);
+  }
+
+  for (const auto& [received, accepted] : accepted_inputs)
+  {
+    const int32_t               client_slot = received->slot;
+    const shared::Client_Input& input       = received->input;
 
     client_slot_t&                 client        = context.clients[client_slot];
-    entities::Player_Entity&       player        = *accepted->player;
-    const shared::Tick_Input& tick_input = accepted->tick_input;
+    entities::Player_Entity&       player        = *accepted.player;
+    const shared::Tick_Input& tick_input = accepted.tick_input;
 
     shared::queue_replay_player_view(
         context.world.replay_recorder,
@@ -225,7 +236,6 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
 
     const uint64_t buttons_before_tick = client.latest_buttons_bitmap;
     client.latest_buttons_bitmap       = shared::buttons_at_end_of_tick(tick_input);
-    client.latest_view                 = tick_input.view_at_end;
     const std::optional<shared::View> steering_view = try_find_steering_view_for_player(context, player);
 
     const shared::lens_watch_screen_t screen = shared::clamp_lens_watch_screen(

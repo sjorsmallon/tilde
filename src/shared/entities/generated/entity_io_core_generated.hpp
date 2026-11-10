@@ -47,25 +47,29 @@ enum class entity_action : uint16_t
   Teleport = 12,   // Mobile
   Set_Velocity = 13,   // Mobile
   Add_Velocity = 14,   // Mobile
-  Grant_Weapon = 15,   // Armable
-  Take_Weapon = 16,   // Armable
-  Set_Respawn_Point = 17,   // Respawnable
-  Complete_Level = 18,   // Objective
-  Start = 19,   // Timer
-  Stop = 20,   // Timer
-  Restart = 21,   // Timer
-  Pause = 22,   // Timer
-  Resume = 23,   // Timer
-  Start_Match = 24,   // Match_Control
-  End_Round = 25,   // Match_Control
-  Restart_Round = 26,   // Match_Control
-  End_Match = 27,   // Match_Control
-  Reverse = 28,   // Path_Following
-  Go_To = 29,   // Path_Following
-  Fire = 30,   // Firing
+  Begin_Dolly = 15,   // Mobile
+  End_Dolly = 16,   // Mobile
+  Begin_Trail = 17,   // Mobile
+  End_Trail = 18,   // Mobile
+  Grant_Weapon = 19,   // Armable
+  Take_Weapon = 20,   // Armable
+  Set_Respawn_Point = 21,   // Respawnable
+  Complete_Level = 22,   // Objective
+  Start = 23,   // Timer
+  Stop = 24,   // Timer
+  Restart = 25,   // Timer
+  Pause = 26,   // Timer
+  Resume = 27,   // Timer
+  Start_Match = 28,   // Match_Control
+  End_Round = 29,   // Match_Control
+  Restart_Round = 30,   // Match_Control
+  End_Match = 31,   // Match_Control
+  Reverse = 32,   // Path_Following
+  Go_To = 33,   // Path_Following
+  Fire = 34,   // Firing
 };
 
-constexpr uint32_t ENTITY_ACTION_COUNT = 31;
+constexpr uint32_t ENTITY_ACTION_COUNT = 35;
 
 enum class entity_signal : uint16_t
 {

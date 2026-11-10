@@ -2811,6 +2811,90 @@ static void test_noclip_passes_through_the_floor_and_ends_still(const cvar_state
   }
 }
 
+// --- dolly: the mouse buttons drive along the aim, the keys drive nothing ------
+static void test_dolly_drives_on_the_mouse_buttons_and_ignores_the_keys(const cvar_state_t& cvars)
+{
+  printf("\n[dolly] fire drives along the aim's ground direction on the floor, the keys drive nothing, a zeroed clock lets go\n");
+
+  const Bounding_Volume_Hierarchy bvh      = floor_world();
+  const shared::predicted_world_t world{};
+  const shared::movement_settings_t settings = shared::movement_settings_from_cvars(cvars);
+
+  const float diagonal = std::sqrt(0.5f);
+  const vec3  front{diagonal, diagonal, 0.f};
+  const vec3  look_right{0.f, 0.f, 1.f};
+  const vec3  start{0.f, -0.02f, 0.f};
+  const float speed = 1000.f;
+
+  entities::Movement dolly{};
+  dolly.active_override            = entities::Movement_Override::Dolly;
+  dolly.override_seconds_remaining = std::numeric_limits<float>::infinity();
+  dolly.override_speed             = speed;
+
+  Move_Input fire{};
+  fire.fire_pressed = true;
+  Move_Input keys{};
+  keys.forward_pressed = true;
+  keys.left_pressed    = true;
+  Move_Input jump{};
+  jump.jump_pressed = true;
+
+  std::optional<vec3> first_end;
+  for (int sub_steps : {1, 2, 8})
+  {
+    shared::move_state_t state{.feet = start, .velocity = {}, .movement = dolly};
+    const float          step_dt = 0.5f / (float)sub_steps;
+    for (int tick = 0; tick < 2 * sub_steps; ++tick)
+      state = player_move(settings, bvh, world, state,
+                          {.buttons = fire, .front = front, .right = look_right, .dt = step_dt},
+                          nullptr);
+
+    printf("    N=%-2d  feet = (%.3f, %.3f, %.3f)\n", sub_steps, state.feet.x, state.feet.y, state.feet.z);
+    check(std::abs(state.feet.x - (start.x + speed * 1.f)) < 0.5f, "fire drives speed * seconds along the aim's ground direction");
+    check(std::abs(state.feet.y) < 0.5f, "a pitched-up aim does not lift it: gravity keeps it on the floor");
+    if (!first_end) first_end = state.feet;
+    else check(length(*first_end - state.feet) < 0.5f, "step-invariant");
+  }
+
+  {
+    shared::move_state_t state{.feet = start, .velocity = {}, .movement = dolly};
+    for (int tick = 0; tick < 4; ++tick)
+      state = player_move(settings, bvh, world, state,
+                          {.buttons = keys, .front = front, .right = look_right, .dt = 0.25f},
+                          nullptr);
+    check(std::abs(state.feet.x - start.x) < 1e-3f && std::abs(state.feet.z - start.z) < 1e-3f,
+          "the keys drive nothing: it only settles on the floor");
+    check(state.movement.active_override == entities::Movement_Override::Dolly, "and the dolly stays live");
+  }
+
+  {
+    shared::move_state_t state{.feet = start, .velocity = {}, .movement = dolly};
+    state = player_move(settings, bvh, world, state,
+                        {.buttons = jump, .front = front, .right = look_right, .dt = 1.f / 64.f},
+                        nullptr);
+    check(state.velocity.y > 0.f && state.feet.y > 0.1f, "jump takes off from the floor");
+    check(state.movement.active_override == entities::Movement_Override::Dolly, "and the dolly stays live");
+  }
+
+  {
+    const vec3           falling{0.f, -50.f, 0.f};
+    shared::move_state_t state{.feet = {0.f, 100.f, 0.f}, .velocity = falling, .movement = dolly};
+    state.movement.override_seconds_remaining = 0.f;
+    Move_Events events{};
+    state = player_move(settings, bvh, world, state,
+                        {.buttons = fire, .front = front, .right = look_right, .dt = 0.25f}, &events);
+    check(events.override_ended.kind == entities::Movement_Override::Dolly, "a zeroed clock ends it");
+    check(same_vec3(events.override_ended.velocity, falling), "with the velocity it was falling at");
+    check(state.movement.active_override == entities::Movement_Override::None, "and clears it");
+  }
+
+  {
+    const shared::View panned = shared::pan_view_by_keys({.yaw = 10.f, .pitch = 85.f}, keys, 90.f, 0.1f);
+    check(std::abs(panned.yaw - 1.f) < 1e-4f, "left yaws by degrees_per_second * dt");
+    check(std::abs(panned.pitch - 89.f) < 1e-4f, "forward pitches up and clamps at the view limit");
+  }
+}
+
 static void test_a_steep_face_is_a_wall_under_the_instant_models(const cvar_state_t& cvars)
 {
   printf("\n[DELIBERATE] a face past 45 degrees: the instant models cannot push up it\n");
@@ -2921,6 +3005,7 @@ int main()
   test_surf_ramp_projects_the_fall(cvars);
   test_a_steep_face_is_a_wall_under_the_instant_models(cvars);
   test_noclip_passes_through_the_floor_and_ends_still(cvars);
+  test_dolly_drives_on_the_mouse_buttons_and_ignores_the_keys(cvars);
 
   printf(failures == 0 ? "\nplayer_move_step_invariance_test PASSED\n"
                        : "\nplayer_move_step_invariance_test FAILED (%d)\n",

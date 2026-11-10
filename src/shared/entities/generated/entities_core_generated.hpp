@@ -10,6 +10,7 @@
 #include "entity_uid.hpp"
 #include "linalg.hpp"
 #include "network/network_types.hpp"
+#include "pascal_array.hpp"
 #include "reflection.hpp"
 #include "span.hpp"
 #include "assets/asset_id.hpp"
@@ -330,9 +331,10 @@ enum class Movement_Override : uint8_t
   Pilot = 4,
   Merged = 5,
   Noclip = 6,
+  Dolly = 7,
 };
 
-constexpr uint32_t Movement_Override_COUNT = 7;
+constexpr uint32_t Movement_Override_COUNT = 8;
 
 const char* to_string(Movement_Override value);
 template <> std::optional<Movement_Override> try_from_string<Movement_Override>(std::string_view text);
@@ -412,11 +414,12 @@ enum class entity_type : uint16_t
   Projector_Entity = 38,
   Projected_Ball_Entity = 39,
   Projected_Image_Entity = 40,
+  Trail_Entity = 41,
 };
 
 // Not a member of the enum above, so `switch` over an
 // entity_type still warns on an unhandled case.
-constexpr uint32_t ENTITY_TYPE_COUNT = 41;
+constexpr uint32_t ENTITY_TYPE_COUNT = 42;
 
 enum class component_type : uint16_t
 {

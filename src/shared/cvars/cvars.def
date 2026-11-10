@@ -157,6 +157,12 @@ Match :: cvars {
     mp_projected_restitution: f32 = 0.5   @Server  "Fraction of its speed into a shape a projected ball keeps coming back"
     mp_projected_friction:    f32 = 4.0   @Server  "Per-second fraction of its speed along a shape a projected ball loses while touching it"
 
+    // The wall a trail leaves (shared/collision/trail.hpp): its cross-section is mirrored because the client draws it.
+    mp_trail_half_width:      f32 = 8.0   @Mirrored "Half of how wide a trail's wall is, across its edge"
+    mp_trail_height:          f32 = 64.0  @Mirrored "How tall a trail's wall is, up from the feet that laid it"
+    mp_trail_damage:          f32 = 100.0 @Server   "Damage a player takes each tick they stand in a trail's wall"
+    mp_trail_lag_distance:    f32 = 48.0  @Server   "How far back along their own trail, from their feet, a player is not hurt by it"
+
     // The fewest CLIENTS WITH A BODY that can leave warmup, and then only once
     // every one of them has voted `ready`. Joined players, not connections:
     // four people who are all spectating are not a match. Bots neither count
@@ -341,6 +347,8 @@ Client :: cvars {
     // movement sweeps the same distance across the screen at any FOV. 0 makes
     // zoom not slow the mouse down at all.
     m_zoom_sensitivity_ratio: f32 = 1.0     @Client    "How much zoom scales mouse sensitivity (1 = constant feel, 0 = none)"
+    // While a Dolly override is live the keys pan the aim instead of the mouse (shared/movement/movement_override.hpp).
+    cl_dolly_pan_degrees_per_second: f32 = 90.0 @Client "How fast W/S pitch and A/D yaw the view while riding a dolly"
 
     cl_maxfps:              f32 = 1000.0    @Client    "Maximum client framerate (0 = unlimited)"
 

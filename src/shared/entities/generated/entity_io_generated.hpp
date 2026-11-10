@@ -70,6 +70,10 @@ struct action_data_t
     Teleport_Data teleport;
     Set_Velocity_Data set_velocity;
     Add_Velocity_Data add_velocity;
+    Begin_Dolly_Data begin_dolly;
+    End_Dolly_Data end_dolly;
+    Begin_Trail_Data begin_trail;
+    End_Trail_Data end_trail;
     Grant_Weapon_Data grant_weapon;
     Take_Weapon_Data take_weapon;
     Set_Respawn_Point_Data set_respawn_point;
@@ -103,6 +107,10 @@ struct action_data_t
   const Teleport_Data& as_teleport() const { assert(tag == entity_action::Teleport); return teleport; }
   const Set_Velocity_Data& as_set_velocity() const { assert(tag == entity_action::Set_Velocity); return set_velocity; }
   const Add_Velocity_Data& as_add_velocity() const { assert(tag == entity_action::Add_Velocity); return add_velocity; }
+  const Begin_Dolly_Data& as_begin_dolly() const { assert(tag == entity_action::Begin_Dolly); return begin_dolly; }
+  const End_Dolly_Data& as_end_dolly() const { assert(tag == entity_action::End_Dolly); return end_dolly; }
+  const Begin_Trail_Data& as_begin_trail() const { assert(tag == entity_action::Begin_Trail); return begin_trail; }
+  const End_Trail_Data& as_end_trail() const { assert(tag == entity_action::End_Trail); return end_trail; }
   const Grant_Weapon_Data& as_grant_weapon() const { assert(tag == entity_action::Grant_Weapon); return grant_weapon; }
   const Take_Weapon_Data& as_take_weapon() const { assert(tag == entity_action::Take_Weapon); return take_weapon; }
   const Set_Respawn_Point_Data& as_set_respawn_point() const { assert(tag == entity_action::Set_Respawn_Point); return set_respawn_point; }
@@ -138,6 +146,10 @@ action_data_t erase(const Damage_Data& payload);
 action_data_t erase(const Teleport_Data& payload);
 action_data_t erase(const Set_Velocity_Data& payload);
 action_data_t erase(const Add_Velocity_Data& payload);
+action_data_t erase(const Begin_Dolly_Data& payload);
+action_data_t erase(const End_Dolly_Data& payload);
+action_data_t erase(const Begin_Trail_Data& payload);
+action_data_t erase(const End_Trail_Data& payload);
 action_data_t erase(const Grant_Weapon_Data& payload);
 action_data_t erase(const Take_Weapon_Data& payload);
 action_data_t erase(const Set_Respawn_Point_Data& payload);
@@ -208,6 +220,7 @@ inline constexpr uint64_t ENTITY_TRAIT_MASKS[ENTITY_TYPE_COUNT] = {
   trait_bit(entity_trait::Colorable) | trait_bit(entity_trait::Switchable),   // Projector_Entity
   trait_bit(entity_trait::Colorable),   // Projected_Ball_Entity
   trait_bit(entity_trait::Typeable),   // Projected_Image_Entity
+  0u,   // Trail_Entity
 };
 
 inline bool type_has_trait(entity_type type, entity_trait trait)
@@ -239,7 +252,7 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   0u,   // Invalid
   0u,   // Player_Spawn_Entity
   0u,   // Player_Spectate_Entity
-  action_bit(entity_action::Kill) | action_bit(entity_action::Set_Health) | action_bit(entity_action::Damage) | action_bit(entity_action::Teleport) | action_bit(entity_action::Set_Velocity) | action_bit(entity_action::Add_Velocity) | action_bit(entity_action::Grant_Weapon) | action_bit(entity_action::Take_Weapon) | action_bit(entity_action::Set_Respawn_Point),   // Player_Entity
+  action_bit(entity_action::Kill) | action_bit(entity_action::Set_Health) | action_bit(entity_action::Damage) | action_bit(entity_action::Teleport) | action_bit(entity_action::Set_Velocity) | action_bit(entity_action::Add_Velocity) | action_bit(entity_action::Begin_Dolly) | action_bit(entity_action::End_Dolly) | action_bit(entity_action::Begin_Trail) | action_bit(entity_action::End_Trail) | action_bit(entity_action::Grant_Weapon) | action_bit(entity_action::Take_Weapon) | action_bit(entity_action::Set_Respawn_Point),   // Player_Entity
   0u,   // Weapon_Entity
   0u,   // Shot_Entity
   0u,   // Platform_Entity
@@ -277,6 +290,7 @@ inline constexpr uint64_t ACTION_ACCEPTED_MASKS[ENTITY_TYPE_COUNT] = {
   action_bit(entity_action::Enable) | action_bit(entity_action::Disable) | action_bit(entity_action::Toggle_Enabled) | action_bit(entity_action::Set_Color),   // Projector_Entity
   action_bit(entity_action::Set_Color),   // Projected_Ball_Entity
   action_bit(entity_action::Set_Character),   // Projected_Image_Entity
+  0u,   // Trail_Entity
 };
 
 inline bool type_accepts_action(entity_type type, entity_action action)
@@ -338,6 +352,7 @@ inline constexpr uint64_t SIGNAL_EMITTED_MASKS[ENTITY_TYPE_COUNT] = {
   signal_bit(entity_signal::Color_Changed),   // Projector_Entity
   signal_bit(entity_signal::Color_Changed),   // Projected_Ball_Entity
   0u,   // Projected_Image_Entity
+  0u,   // Trail_Entity
 };
 
 inline bool type_emits_signal(entity_type type, entity_signal signal)

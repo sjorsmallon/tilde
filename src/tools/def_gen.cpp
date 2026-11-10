@@ -460,10 +460,13 @@ struct type_reference_t
   int32_t       array_key_declaration_index;
 
   // `T<N>` -- a COUNT on the wire, then at most N elements, generated as
-  // Pascal_Array<T, N>. Message fields only: every list in the protocol has a
-  // real bound, and the bound is what keeps a message a stack local. 0 when
-  // the field is a single value. `string<N>` is not one: there the number is
-  // the string's capacity (see `capacity`), and `string<N><M>` is M of them.
+  // Pascal_Array<T, N>. A message field or an entity field: every list has a
+  // real bound, and the bound is what keeps a message a stack local and an
+  // entity a fixed-stride pool row. A message codes a list inline
+  // (emit_message_field_codec); an entity gets ONE reflection row whose `list`
+  // column the runtime walks. 0 when the field is a single value. `string<N>`
+  // is not one: there the number is the string's capacity (see `capacity`),
+  // and `string<N><M>` is M of them.
   int32_t pascal_bound;
 };
 
@@ -2471,9 +2474,24 @@ static void resolve_types(program_t* program, const name_table_t* table,
         }
       }
 
-      if (type_is_pascal_array(&field->type) && program->family != DEF_FAMILY_MESSAGE)
+      if (type_is_pascal_array(&field->type) && program->family == DEF_FAMILY_CVAR)
         report_error(program, field->offset, field->line,
-                     "field '%.*s' is a counted list ('T<N>'), which only a message carries",
+                     "field '%.*s' is a counted list ('T<N>'), which a message or an entity "
+                     "carries, not a cvar",
+                     field->name.length, field->name.data);
+
+      // The inspector and the map file have no spelling for a list, and
+      // nothing needs one: the one entity list is runtime state.
+      if (type_is_pascal_array(&field->type) && (field->flags & FIELD_FLAG_EDITABLE) != 0)
+        report_error(program, field->offset, field->line,
+                     "field '%.*s' is a counted list ('T<N>') and @Editable, but the inspector "
+                     "and the map file have no spelling for a list. Drop the flag",
+                     field->name.length, field->name.data);
+
+      if (type_is_pascal_array(&field->type) && field->default_value.kind != DEFAULT_NONE)
+        report_error(program, field->offset, field->line,
+                     "field '%.*s' is a counted list ('T<N>'), which starts empty and takes no "
+                     "default",
                      field->name.length, field->name.data);
 
       if (field->type.kind == TYPE_BYTES && program->family != DEF_FAMILY_MESSAGE)
@@ -2537,6 +2555,15 @@ static void resolve_types(program_t* program, const name_table_t* table,
             report_error(program, field->offset, field->line,
                          "field '%.*s' is an array of the component '%.*s'; only scalar and enum "
                          "elements are supported today",
+                         field->name.length, field->name.data, target_declaration->name.length,
+                         target_declaration->name.data);
+          // A list of components is one reflection row the runtime would have to
+          // recurse into per element; a message codes it inline instead. Refused
+          // on an entity until something needs it.
+          if (type_is_pascal_array(&field->type) && program->family == DEF_FAMILY_ENTITY)
+            report_error(program, field->offset, field->line,
+                         "field '%.*s' is a counted list of the component '%.*s'; an entity's "
+                         "list elements are scalars, vectors, strings and enums",
                          field->name.length, field->name.data, target_declaration->name.length,
                          target_declaration->name.data);
           // A component-typed field takes a component literal or nothing. Any
@@ -4619,6 +4646,7 @@ static void emit_entities_core_header(FILE* out, const program_t* program)
   fprintf(out, "#include \"entity_uid.hpp\"\n");
   fprintf(out, "#include \"linalg.hpp\"\n");
   fprintf(out, "#include \"network/network_types.hpp\"\n");
+  fprintf(out, "#include \"pascal_array.hpp\"\n");
   fprintf(out, "#include \"reflection.hpp\"\n");
   fprintf(out, "#include \"span.hpp\"\n");
   if (has_asset_class(program))
@@ -5048,6 +5076,11 @@ static int32_t emitted_row_count(const program_t* program, const declaration_t* 
 // walk never learn that arrays exist. The dotted name it mints ("weapons.Scout")
 // is the shape collect_leaf_fields already joins for a component, so an array
 // inside one reads as "inventory.weapons.Scout" with no extra rule anywhere.
+//
+// A counted list `T<N>` is the one row that is NOT expanded: its count is
+// runtime state, so the row spans the whole Pascal_Array and its `list` column
+// says where the elements lie. The delta mask and undo memcmp it as one blob;
+// only the codec and the text walk inside (reflection.hpp, list_element_row).
 static void write_field_rows(FILE* out, const program_t* program, const field_t* field,
                              const char* struct_name_prefix, int32_t struct_name_length,
                              const char* component_id, const char* string_capacity,
@@ -5056,6 +5089,18 @@ static void write_field_rows(FILE* out, const program_t* program, const field_t*
   // Designated initializers: the table is read far more often than it is
   // written, and nine positional values in a row is where a reader starts
   // counting commas.
+  // The list column stays C++ EXPRESSIONS like the offsets below: the compiler
+  // is the authority on Pascal_Array's layout, not this generator.
+  char list_column[512] = "NOT_A_LIST";
+  if (type_is_pascal_array(&field->type))
+    snprintf(list_column, sizeof(list_column),
+             "{.bound = %du,\n"
+             "            .element_size_in_bytes = (uint32_t)sizeof(decltype(%.*s::%.*s)::element_t),\n"
+             "            .elements_offset = (uint32_t)offsetof(decltype(%.*s::%.*s), elements)}",
+             field->type.pascal_bound, struct_name_length, struct_name_prefix, field->name.length,
+             field->name.data, struct_name_length, struct_name_prefix, field->name.length,
+             field->name.data);
+
   auto write_row = [&](const char* row_name, int32_t row_name_length,
                        const char* offset_expression, const char* size_expression) {
     fprintf(out, "  {.name = \"%.*s\",\n", row_name_length, row_name);
@@ -5066,7 +5111,8 @@ static void write_field_rows(FILE* out, const program_t* program, const field_t*
     fprintf(out, "   .component_id = %s,\n", component_id);
     fprintf(out, "   .string_capacity = %s,\n", string_capacity);
     fprintf(out, "   .asset_class_id = %s,\n", asset_class_id);
-    fprintf(out, "   .enum_info = %s},\n", enum_id);
+    fprintf(out, "   .enum_info = %s,\n", enum_id);
+    fprintf(out, "   .list = %s},\n", list_column);
   };
 
   char offset_expression[256];
@@ -6796,7 +6842,8 @@ static void write_message_field_row(FILE* out, const char* name, const type_refe
   fprintf(out, "   .component_id = NOT_A_COMPONENT,\n");
   fprintf(out, "   .string_capacity = %s,\n", string_capacity);
   fprintf(out, "   .asset_class_id = NOT_AN_ASSET_CLASS,\n");
-  fprintf(out, "   .enum_info = %s},\n", enum_info);
+  fprintf(out, "   .enum_info = %s,\n", enum_info);
+  fprintf(out, "   .list = NOT_A_LIST},\n");
 }
 
 // `source`'s own leaves, in declaration order: the rows of <SOURCE>_FIELDS.
@@ -6894,7 +6941,7 @@ static void emit_message_field_codec(FILE* out, const program_t* program,
       {
         case CODEC_WRITE:
           fprintf(out, "  network::write_field(writer, reinterpret_cast<const uint8_t*>(&value), "
-                       "%s_FIELDS[%d], %s_FIELDS[%d].offset);\n", table, row, table, row);
+                       "%s_FIELDS[%d], %s_FIELDS[%d].offset, nullptr);\n", table, row, table, row);
           break;
         case CODEC_READ:
           fprintf(out, "  if (!network::read_field(reader, reinterpret_cast<uint8_t*>(&value), "
@@ -6972,7 +7019,7 @@ static void emit_message_field_codec(FILE* out, const program_t* program,
           fprintf(out, "    write_%s(writer, value.%.*s.elements[index]);\n", element_lower, name_len, name);
         else
           fprintf(out, "    network::write_field(writer, reinterpret_cast<const uint8_t*>(&value.%.*s.elements[index]), "
-                       "%s, 0);\n", name_len, name, element_row);
+                       "%s, 0, nullptr);\n", name_len, name, element_row);
         break;
       case CODEC_READ:
         fprintf(out, "  {\n    const uint32_t count = network::read_var_uint(reader);\n");
@@ -8052,7 +8099,8 @@ static void emit_verb_field_table(FILE* out, const program_t* program, const fie
     fprintf(out, "   .component_id = NOT_A_COMPONENT,\n");
     fprintf(out, "   .string_capacity = %s,\n", string_capacity);
     fprintf(out, "   .asset_class_id = NOT_AN_ASSET_CLASS,\n");
-    fprintf(out, "   .enum_info = %s},\n", enum_info);
+    fprintf(out, "   .enum_info = %s,\n", enum_info);
+    fprintf(out, "   .list = NOT_A_LIST},\n");
   }
 
   fprintf(out, "};\n\n");

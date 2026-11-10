@@ -91,7 +91,9 @@ Lens_Filter :: enum { Red, Green, Blue }
 // Pilot holds the hull while a rocket flies along the player's aim: override_target_position is the rocket.
 // Merged holds the hull inside another player's: override_target_uid is the driver, who walks for both (shared/merge.hpp).
 // Noclip flies the hull along the aim at override_speed, swept against nothing; the `noclip` command attaches it and ends it through its clock.
-Movement_Override :: enum { None, Reel, Stasis, Statue, Pilot, Merged, Noclip }
+// Dolly is a camera rig: the mouse buttons drive the hull forward and back along the aim's ground direction at override_speed under
+// gravity, the keys pan the aim on the client and reach the step as nothing. Mobile's Begin_Dolly / End_Dolly attach it and zero its clock.
+Movement_Override :: enum { None, Reel, Stasis, Statue, Pilot, Merged, Noclip, Dolly }
 
 // ---------------------------------------------------------------------------
 // COMPONENTS
@@ -330,7 +332,11 @@ Mortal :: trait requires Health {
 Mobile :: trait {
     accepts Teleport(destination: entity, keep_velocity: bool),
             Set_Velocity(velocity: v3),
-            Add_Velocity(velocity: v3)
+            Add_Velocity(velocity: v3),
+            Begin_Dolly(speed: f32),
+            End_Dolly(),
+            Begin_Trail(),
+            End_Trail()
 }
 
 Armable :: trait requires Inventory {
@@ -922,4 +928,18 @@ Projected_Image_Entity :: entity is Typeable {
     projector: entity                    @Networked @Editable
     texture:   texture_asset = .Missing  @Editable
     text:      string<32>[Image_Row]     @Networked @Editable
+}
+
+// The wall a player leaves behind them (shared/collision/trail.hpp, server/systems/trail_system.cpp): points laid
+// from the owner's feet by the flight path rule, a box on every edge between two points, mp_trail_half_width across
+// and mp_trail_height tall, and a live edge from the last point to the owner's feet. Touching one hurts; the owner is
+// spared on the mp_trail_lag_distance behind their feet. Mobile's Begin_Trail spawns one owned by the activator and End_Trail nulls its
+// owner; a trail with no owner neither grows nor dies, and one whose points are full ends itself.
+Trail_Entity :: entity @runtime_only {
+    owner_uid:  entity    @Networked
+    born_tick:  u32       @Networked
+    // 0 while the trail is owned.
+    ended_tick: u32       @Networked
+    points:     v3<1024>  @Networked
+    render:     Render = { mesh = .Box, color = {1, 0.45, 0.1} }
 }

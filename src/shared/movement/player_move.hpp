@@ -89,27 +89,34 @@ struct Move_Input
   bool left_pressed     = false;
   bool right_pressed    = false;
   bool jump_pressed     = false;
+  // The mouse buttons, read by the one override that moves on them (a dolly) and by nothing else.
+  bool fire_pressed           = false;
+  bool secondary_fire_pressed = false;
 };
 
 inline Move_Input move_input_from_buttons(uint64_t buttons)
 {
   return {
-    .forward_pressed  = (buttons & Button::Forward)  != 0,
-    .backward_pressed = (buttons & Button::Backward) != 0,
-    .left_pressed     = (buttons & Button::Left)     != 0,
-    .right_pressed    = (buttons & Button::Right)     != 0,
-    .jump_pressed     = (buttons & Button::Jump)      != 0,
+    .forward_pressed        = (buttons & Button::Forward)        != 0,
+    .backward_pressed       = (buttons & Button::Backward)       != 0,
+    .left_pressed           = (buttons & Button::Left)           != 0,
+    .right_pressed          = (buttons & Button::Right)          != 0,
+    .jump_pressed           = (buttons & Button::Jump)           != 0,
+    .fire_pressed           = (buttons & Button::Fire)           != 0,
+    .secondary_fire_pressed = (buttons & Button::Secondary_Fire) != 0,
   };
 }
 
 inline uint64_t buttons_from_move_input(const Move_Input &input)
 {
   uint64_t b = 0;
-  if (input.forward_pressed)  b |= Button::Forward;
-  if (input.backward_pressed) b |= Button::Backward;
-  if (input.left_pressed)     b |= Button::Left;
-  if (input.right_pressed)    b |= Button::Right;
-  if (input.jump_pressed)     b |= Button::Jump;
+  if (input.forward_pressed)        b |= Button::Forward;
+  if (input.backward_pressed)       b |= Button::Backward;
+  if (input.left_pressed)           b |= Button::Left;
+  if (input.right_pressed)          b |= Button::Right;
+  if (input.jump_pressed)           b |= Button::Jump;
+  if (input.fire_pressed)           b |= Button::Fire;
+  if (input.secondary_fire_pressed) b |= Button::Secondary_Fire;
   return b;
 }
 

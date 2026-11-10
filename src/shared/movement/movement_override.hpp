@@ -1,4 +1,5 @@
 #pragma once
+#include "locomotion.hpp"
 #include "movement_kernel.hpp"
 #include "movement_settings.hpp"
 #include "player_move.hpp"
@@ -62,10 +63,11 @@ void clear_override(entities::Movement& movement);
 // Step 2's override half: the exhaustive switch over what is live. Clears the
 // override when it is spent, which is why the state is taken by reference.
 // The input is the step's: the pilot's rocket flies along its aim, a noclip flies the hull by its keys.
+// The jump is the step's too, already spent: a dolly takes off with it, every other kind ignores it.
 [[nodiscard]] override_step_t step_override(const movement_settings_t& settings,
                                             const Bounding_Volume_Hierarchy& bvh,
                                             const predicted_world_t& world, move_state_t& state,
-                                            const move_input_t& input, float dt);
+                                            const move_input_t& input, const jump_t& jump, float dt);
 
 // A frozen hull is a MOVER other players stand on (shared/statues.hpp), so the
 // step must not collide with its own: the player's view leaves its own uid out
@@ -77,12 +79,17 @@ void clear_override(entities::Movement& movement);
 }
 
 // The MODEL takes no input while one of these is live, so a jump press spends no charge; a noclip
-// reads the keys itself.
+// reads the keys itself. A dolly is not here: it jumps.
 [[nodiscard]] constexpr bool override_ignores_input(entities::Movement_Override kind)
 {
   return override_freezes(kind) || kind == entities::Movement_Override::Pilot ||
          kind == entities::Movement_Override::Merged || kind == entities::Movement_Override::Noclip;
 }
+
+// A dolly's keys turn the AIM, on the client that owns it: forward and back pitch, left and right yaw,
+// degrees_per_second each, held across dt. The result is what the client sends as its view.
+[[nodiscard]] View pan_view_by_keys(const View& view, const Move_Input& keys, float degrees_per_second,
+                                    float dt);
 
 // The hull is translated through the map and movers alike, so the mover push skips it too.
 [[nodiscard]] constexpr bool override_passes_through(entities::Movement_Override kind)

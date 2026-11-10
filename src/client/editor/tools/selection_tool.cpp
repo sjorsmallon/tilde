@@ -1299,7 +1299,7 @@ void Selection_Tool::on_draw_ui(editor_context_t& ctx)
 
 // The sidebar's lower pane. One entity alone gets Fields and Connections tabs;
 // an armed row pick holds the Connections tab, since that is where it is shown.
-void Selection_Tool::on_draw_inspector(editor_context_t& ctx)
+void Selection_Tool::draw_inspector_of_selection(editor_context_t& ctx)
 {
   if (selected_uids.empty() || !ctx.map)
     return;
@@ -2449,6 +2449,12 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
     return;
   }
 
+  if (e.key == input::key_t::Tab && !e.mods.ctrl && !e.mods.alt)
+  {
+    cycle_focus(e.mods.shift);
+    return;
+  }
+
   // Escape is the cancel, not a right click: only LMB reaches a tool at all, and
   // RMB is the camera's -- an RMB click is an orbit drag that happened not to
   // move, so cancelling on it would fire every time you stopped looking around.
@@ -2626,6 +2632,7 @@ void Selection_Tool::on_draw_overlay(editor_context_t& ctx,
     draw_selection_highlight(entry.entity.get(), draws, ctx.time, grid_step, draw_settings,
                              outlined[index] != 0);
   }
+  draw_focus_outline(ctx, draws);
 
   // 1b. What a selected Geometry_Owner_Entity SWITCHES. Nothing in the viewport says
   // which brushes a switch reaches otherwise -- the tie is one key in a file --

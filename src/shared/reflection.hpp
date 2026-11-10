@@ -56,6 +56,20 @@ constexpr uint32_t                NOT_A_STRING       = 0;
 constexpr int32_t                 NOT_AN_ASSET_CLASS = -1;
 constexpr const enum_type_info_t* NOT_AN_ENUM        = nullptr;
 
+// A `T<N>` field is ONE row over the whole Pascal_Array<T, N>, whose `type` and
+// type-specific columns are the ELEMENT's. The row's first four bytes are the
+// uint32_t count; element `index` lies `elements_offset + index *
+// element_size_in_bytes` bytes in. A reader that treats the row as one blob
+// (a memcmp, a whole copy) needs none of this; the codec and the text walk the
+// elements through list_element_row.
+struct list_info_t
+{
+  uint32_t bound;
+  uint32_t element_size_in_bytes;
+  uint32_t elements_offset;
+};
+constexpr list_info_t NOT_A_LIST = {};
+
 // A field of one struct. Offsets are relative to THAT struct, so walking into a
 // component composes them by addition; the flat tables (the event families')
 // never nest and their offsets are final.
@@ -74,7 +88,31 @@ struct field_info_t
   // enum id: that is what lets one codec serve every family, since there is no
   // id space left to resolve against.
   const enum_type_info_t* enum_info;
+
+  // A `T<N>` field only, else NOT_A_LIST.
+  list_info_t list;
 };
+
+constexpr bool field_is_list(const field_info_t& field)
+{
+  return field.list.bound > 0;
+}
+
+// The row one element of a list reads through: the list's own type columns at
+// offset 0, so a caller adds list_element_offset to the list's bytes itself.
+constexpr field_info_t list_element_row(const field_info_t& field)
+{
+  field_info_t element  = field;
+  element.offset        = 0;
+  element.size_in_bytes = field.list.element_size_in_bytes;
+  element.list          = NOT_A_LIST;
+  return element;
+}
+
+constexpr uint32_t list_element_offset(const field_info_t& field, uint32_t index)
+{
+  return field.list.elements_offset + index * field.list.element_size_in_bytes;
+}
 
 // --- Text -------------------------------------------------------------------
 //
@@ -87,14 +125,16 @@ struct field_info_t
 // is exact and a map file diff shows only what actually changed.
 
 // Writes the field at `field_bytes` into `out_text`. False (out_text untouched)
-// only for FIELD_TYPE_COMPONENT, which is not a leaf -- flatten first.
+// only for FIELD_TYPE_COMPONENT, which is not a leaf -- flatten first. A list
+// prints as "[e, e, e]" over its count, for the debug dumps.
 bool field_to_text(const void* field_bytes, const field_info_t& field, std::string& out_text);
 
 // Parses `text` into the field at `field_bytes`. False, and the field left
 // alone, when the text does not parse as this field's type or names an
 // enum/asset value that does not exist. The caller reports it -- this returns
 // the failure rather than logging, because only the caller knows which entity
-// and which file it came from.
+// and which file it came from. A list has no text form yet: the generator
+// refuses @Editable on one, so no map carries one, and this returns false.
 bool field_from_text(const std::string& text, const field_info_t& field, void* field_bytes);
 
 // "{ name=value, name=value }" over a FLAT table -- the event families', whose

@@ -354,9 +354,9 @@ constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINITIONS =
                                                       .radius  = 8.f,
                                                       .seconds = 5.f,
                                                       .leaves  = pilot_leaves_t::Path,
-                                                      .path    = {.turn_degrees     = 10.f,
-                                                                  .shortest_segment = 32.f,
-                                                                  .longest_segment  = 192.f,
+                                                      .path    = {.rule = {.turn_degrees     = 10.f,
+                                                                           .shortest_segment = 32.f,
+                                                                           .longest_segment  = 192.f},
                                                                   .joint_overlap    = 8.f,
                                                                   .drop = player_eye_height + 4.f,
                                                                   .half_width = 46.f,
@@ -415,7 +415,7 @@ constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINITIONS =
                                  .lens_view  = {.filter = entities::Lens_Filter::Red}},
      .sounds                  = {.fire         = assets::NO_ASSET_NAME,
                                  .world_impact = assets::NO_ASSET_NAME}},
-    // Two bodies trade mouses: each keeps its owner's keys and its view is turned by the other's hand (shared/camera_swap.hpp).
+    // Two bodies trade eyes and mouses: each keeps its owner's keys, and each player looks out of the other's head, turning it with their own mouse (shared/camera_swap.hpp).
     {.weapon                  = entities::Weapon::Camera_Swapper,
      .display_name            = "Camera Swapper",
      .slot                    = entities::Inventory_Slot::Utility_2,

@@ -327,6 +327,8 @@ struct draw_inputs_t
   float world_delta_seconds = 0.f;
   // Connected, in our own body, through our own eye: what a held thing (the flashlight, a lens) is drawn for.
   bool camera_is_my_eye = false;
+  // The remote body a camera swap seats our eye in, null in our own: our own body is then drawn in full and this one hidden.
+  const Remote_Player_State* eye_body = nullptr;
   drawn_tick_t drawn;
   // Where our own body is drawn this frame; a canopy hangs over it.
   vec3f local_feet = {};
@@ -597,6 +599,7 @@ void Play_State::draw_rendered_entities(client_context_t &ctx, const draw_inputs
 {
   shared::Entity_System &entity_system = ctx.world.session.entity_system;
 
+  std::vector<drawn_entity_t> poses;
   for (auto [entity, render] : entity_system.entities_with<entities::Render>())
   {
     // ALONGSIDE the model and ahead of every skip below: a hit volume is not an
@@ -608,36 +611,39 @@ void Play_State::draw_rendered_entities(client_context_t &ctx, const draw_inputs
     if (!render.visible)
       continue;
 
-    const std::optional<drawn_entity_t> drawn =
-        try_compute_drawn_entity_at_tick(ctx, entity, render, frame.drawn, frame.local_feet);
-    if (!drawn)
+    poses.clear();
+    compute_drawn_entity_poses_at_tick(ctx, entity, render, frame.drawn, frame.local_feet, poses);
+    if (poses.empty())
       continue;
 
     const renderer::mesh_handle_t mesh = get_render_mesh(assets::get_mesh(render.mesh));
     if (!mesh.valid())
       continue;
 
-    renderer::mesh_draw_t draw{};
-    draw.mesh       = mesh;
-    draw.clock_wipe = drawn->clock_wipe;
-    draw.dissolve   = drawn->dissolve;
-    draw.peel       = drawn->peel;
-    draw.transform  = linalg::compose_transform(
-        drawn->position, linalg::compose_model_rotation(drawn->orientation, render.rotation), drawn->scale);
+    for (const drawn_entity_t &drawn : poses)
+    {
+      renderer::mesh_draw_t draw{};
+      draw.mesh       = mesh;
+      draw.clock_wipe = drawn.clock_wipe;
+      draw.dissolve   = drawn.dissolve;
+      draw.peel       = drawn.peel;
+      draw.transform  = linalg::compose_transform(
+          drawn.position, linalg::compose_model_rotation(drawn.orientation, render.rotation), drawn.scale);
 
-    // Same split the geometry surface path makes, and the editor preview with
-    // it: a wireframe takes neither the base colour nor the shader, because
-    // there is no lit surface for either to apply to.
-    if (render.is_wireframe && renderer::wireframe_supported())
-    {
-      draw.fill = renderer::fill_mode_t::wireframe;
+      // Same split the geometry surface path makes, and the editor preview with
+      // it: a wireframe takes neither the base colour nor the shader, because
+      // there is no lit surface for either to apply to.
+      if (render.is_wireframe && renderer::wireframe_supported())
+      {
+        draw.fill = renderer::fill_mode_t::wireframe;
+      }
+      else
+      {
+        draw.tint               = color_from_vec3(drawn.color);
+        draw.material_overrides = drawn.as_ghost ? ghost_variant(mesh) : material_override(mesh, render.material);
+      }
+      scene.meshes.push_back(draw);
     }
-    else
-    {
-      draw.tint               = color_from_vec3(drawn->color);
-      draw.material_overrides = drawn->as_ghost ? ghost_variant(mesh) : material_override(mesh, render.material);
-    }
-    scene.meshes.push_back(draw);
   }
 }
 
@@ -725,8 +731,9 @@ void Play_State::draw_remote_players(client_context_t &ctx, const draw_inputs_t 
 {
 
 
-  // Our own body, into the shadow maps alone (shadow_caster_t::shadow_only): drawn where the prediction has us
-  // and where we are looking, never where the snapshot last saw us, so the shadow at our feet moves with us.
+  // Our own body, into the shadow maps alone (shadow_caster_t::shadow_only) while our eye is in it, in full
+  // while a camera swap seats the eye elsewhere: drawn where the prediction has us and where our head points,
+  // never where the snapshot last saw us, so the shadow at our feet moves with us.
   // The feet chase the view on the frame clock, the way the server chases everyone's on the tick.
   if (const entities::Player_Entity* my_player = try_find_my_player(ctx);
       my_player != nullptr && my_player->health.current_health > 0 && my_player->render.visible)
@@ -756,7 +763,8 @@ void Play_State::draw_remote_players(client_context_t &ctx, const draw_inputs_t 
           linalg::compose_model_rotation(linalg::from_view_angles(ctx.visuals.own_body_yaw, 0.f), render.rotation),
           render.scale);
       draw.pose          = posed.skinning;
-      draw.shadow_caster = renderer::shadow_caster_t::shadow_only;
+      draw.shadow_caster = frame.eye_body != nullptr ? renderer::shadow_caster_t::dynamic_object
+                                                     : renderer::shadow_caster_t::shadow_only;
       scene.meshes.push_back(draw);
     }
   }
@@ -770,10 +778,11 @@ void Play_State::draw_remote_players(client_context_t &ctx, const draw_inputs_t 
       continue;
     const bool shadow_only = remote_player.slot_index == first_person_slot;
 
-    if (remote_player_is_hidden_by_a_merge(ctx, remote_player))
+    const bool hidden = remote_player_is_hidden_from_my_eye(ctx, remote_player);
+    if (!hidden || &remote_player == frame.eye_body)
+      draw_player_blob_shadow(ctx, frame, remote_player.drawn_position);
+    if (hidden)
       continue;
-
-    draw_player_blob_shadow(ctx, frame, remote_player.drawn_position);
 
     // The player model. A bot IS a Player_Entity, so this draws bots too --
     // which is the only way to see a third-person model without a second
@@ -1347,8 +1356,10 @@ void Play_State::draw(float delta_seconds, std::vector<renderer::view_pass_t> &p
   frame.blob_shadow      = {.radius       = ctx.cvars->cl_blob_shadow_radius,
                             .opacity      = ctx.cvars->cl_blob_shadow_opacity,
                             .max_distance = ctx.cvars->cl_blob_shadow_max_distance};
-  frame.camera_is_my_eye = ctx.connection.phase == Connection_Phase::Connected && !ctx.connection.spectating &&
-                           !ctx.cvars->cl_free_camera && ctx.cvars->cl_spectate_slot < 0;
+  const bool first_person = ctx.connection.phase == Connection_Phase::Connected && !ctx.connection.spectating &&
+                            !ctx.cvars->cl_free_camera && ctx.cvars->cl_spectate_slot < 0;
+  frame.eye_body         = first_person ? try_find_remote_body_my_eye_is_in(ctx) : nullptr;
+  frame.camera_is_my_eye = first_person && frame.eye_body == nullptr;
   frame.drawn            = get_tick_and_fraction_used_for_drawing_this_frame(ctx);
   frame.local_feet       = drawn_local_feet(ctx);
   frame.held_flashlight  = {.color          = {ctx.cvars->r_flashlight_red, ctx.cvars->r_flashlight_green,
@@ -1356,7 +1367,7 @@ void Play_State::draw(float delta_seconds, std::vector<renderer::view_pass_t> &p
                             .intensity      = ctx.cvars->r_flashlight_intensity,
                             .inner_fraction = ctx.cvars->r_flashlight_inner};
 
-  if (frame.camera_is_my_eye)
+  if (frame.camera_is_my_eye || frame.eye_body != nullptr)
     draw_player_blob_shadow(ctx, frame, frame.local_feet);
 
   lap.next("draw: geometry loop");

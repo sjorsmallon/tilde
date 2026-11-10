@@ -15,11 +15,159 @@
 #include "../shared/assets/asset_state.hpp"
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/network/entity_serialization.hpp"
+#include "../shared/network/field_codec.hpp"
+#include "../shared/pascal_array.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities/shot_entity_generated.hpp"
 
 #include <cassert>
+#include <cstddef>
 #include <iostream>
+#include <string>
+
+namespace
+{
+
+// A `T<N>` field as the generator rows it: one row over the whole Pascal_Array,
+// the element's type, the list column saying where the elements lie.
+struct list_holder_t
+{
+  uint32_t                      before = 0;
+  Pascal_Array<linalg::vec3f, 8> points;
+  uint32_t                      after = 0;
+};
+
+constexpr field_info_t LIST_ROW = {
+    .name            = "points",
+    .type            = FIELD_TYPE_V3,
+    .offset          = (uint32_t)offsetof(list_holder_t, points),
+    .size_in_bytes   = (uint32_t)sizeof(list_holder_t::points),
+    .flags           = 0u,
+    .component_id    = NOT_A_COMPONENT,
+    .string_capacity = NOT_A_STRING,
+    .asset_class_id  = NOT_AN_ASSET_CLASS,
+    .enum_info       = NOT_AN_ENUM,
+    .list            = {.bound                 = 8u,
+                        .element_size_in_bytes = (uint32_t)sizeof(decltype(list_holder_t::points)::element_t),
+                        .elements_offset       = (uint32_t)offsetof(decltype(list_holder_t::points), elements)}};
+
+void test_list_field_round_trip()
+{
+  std::cout << "  [Subtest] A counted list rides as count then elements..." << std::endl;
+
+  list_holder_t sent;
+  assert(sent.points.try_push_back({1.0f, 2.0f, 3.0f}));
+  assert(sent.points.try_push_back({4.5f, -6.0f, 7.0f}));
+  assert(sent.points.try_push_back({0.0f, 0.0f, -8.0f}));
+
+  network::Bit_Writer writer;
+  network::write_field(writer, reinterpret_cast<const uint8_t*>(&sent), LIST_ROW, LIST_ROW.offset,
+                       nullptr);
+
+  list_holder_t received;
+  received.points.elements.data[5] = {99.0f, 99.0f, 99.0f};
+  network::Bit_Reader reader(writer.buffer.data(), writer.buffer.size());
+  assert(network::read_field(reader, reinterpret_cast<uint8_t*>(&received), LIST_ROW, LIST_ROW.offset));
+
+  assert(received.points.count == 3);
+  assert((received.points[0] == linalg::vec3f{1.0f, 2.0f, 3.0f}));
+  assert((received.points[1] == linalg::vec3f{4.5f, -6.0f, 7.0f}));
+  assert((received.points[2] == linalg::vec3f{0.0f, 0.0f, -8.0f}));
+  assert((received.points.elements.data[5] == linalg::vec3f{99.0f, 99.0f, 99.0f}));
+  assert(received.before == 0 && received.after == 0);
+
+  std::string text;
+  assert(field_to_text(&received.points, LIST_ROW, text));
+  assert(text == "[1 2 3, 4.5 -6 7, 0 0 -8]");
+
+  std::cout << "    PASSED!" << std::endl;
+}
+
+// The list's own delta: against a baseline only the elements that differ ride,
+// plus the tail the baseline did not hold, and the reader rebuilds the value
+// over its copy of the baseline.
+void test_list_field_delta()
+{
+  std::cout << "  [Subtest] A list against a baseline sends the changed and the new elements..."
+            << std::endl;
+
+  list_holder_t baseline;
+  assert(baseline.points.try_push_back({1.0f, 2.0f, 3.0f}));
+  assert(baseline.points.try_push_back({4.0f, 5.0f, 6.0f}));
+  assert(baseline.points.try_push_back({7.0f, 8.0f, 9.0f}));
+
+  list_holder_t current = baseline;
+  current.points[1]     = {-4.0f, 5.0f, 6.0f};
+  assert(current.points.try_push_back({10.0f, 11.0f, 12.0f}));
+  assert(current.points.try_push_back({13.0f, 14.0f, 15.0f}));
+
+  network::Bit_Writer full;
+  network::write_field(full, reinterpret_cast<const uint8_t*>(&current), LIST_ROW, LIST_ROW.offset,
+                       nullptr);
+
+  network::Bit_Writer delta;
+  network::write_field(delta, reinterpret_cast<const uint8_t*>(&current), LIST_ROW, LIST_ROW.offset,
+                       reinterpret_cast<const uint8_t*>(&baseline));
+
+  // Three elements in place of five, for three bits more.
+  std::cout << "    full=" << full.bit_index << " bits, delta=" << delta.bit_index << " bits"
+            << std::endl;
+  assert(delta.bit_index < full.bit_index);
+
+  list_holder_t received = baseline;
+  network::Bit_Reader reader(delta.buffer.data(), delta.buffer.size());
+  assert(network::read_field(reader, reinterpret_cast<uint8_t*>(&received), LIST_ROW, LIST_ROW.offset));
+  assert(received.points.count == 5);
+  for (uint32_t index = 0; index < 5; ++index)
+    assert((received.points[index] == current.points[index]));
+
+  std::cout << "    PASSED!" << std::endl;
+}
+
+// A list that shrank sends its count and one clear bit per kept element; the
+// kept elements stay what the baseline had.
+void test_list_field_shrinks()
+{
+  std::cout << "  [Subtest] A shrunk list sends only its count..." << std::endl;
+
+  list_holder_t baseline;
+  for (uint32_t index = 0; index < 5; ++index)
+    assert(baseline.points.try_push_back({(float)index, 0.0f, 0.0f}));
+
+  list_holder_t current = baseline;
+  current.points.count  = 2;
+
+  network::Bit_Writer delta;
+  network::write_field(delta, reinterpret_cast<const uint8_t*>(&current), LIST_ROW, LIST_ROW.offset,
+                       reinterpret_cast<const uint8_t*>(&baseline));
+  assert(delta.bit_index <= 16);
+
+  list_holder_t received = baseline;
+  network::Bit_Reader reader(delta.buffer.data(), delta.buffer.size());
+  assert(network::read_field(reader, reinterpret_cast<uint8_t*>(&received), LIST_ROW, LIST_ROW.offset));
+  assert(received.points.count == 2);
+  assert((received.points[0] == linalg::vec3f{0.0f, 0.0f, 0.0f}));
+  assert((received.points[1] == linalg::vec3f{1.0f, 0.0f, 0.0f}));
+
+  std::cout << "    PASSED!" << std::endl;
+}
+
+void test_list_field_refuses_overflow()
+{
+  std::cout << "  [Subtest] A count past the bound is refused..." << std::endl;
+
+  network::Bit_Writer writer;
+  network::write_var_uint(writer, 9);
+
+  list_holder_t received;
+  network::Bit_Reader reader(writer.buffer.data(), writer.buffer.size());
+  assert(!network::read_field(reader, reinterpret_cast<uint8_t*>(&received), LIST_ROW, LIST_ROW.offset));
+  assert(received.points.count == 0);
+
+  std::cout << "    PASSED!" << std::endl;
+}
+
+} // namespace
 
 int main()
 {
@@ -28,6 +176,11 @@ int main()
   assets::number_asset_ids_from_tree(asset_state, "resources");
 
   std::cout << "[TEST] Starting Network Serialization Test..." << std::endl;
+
+  test_list_field_round_trip();
+  test_list_field_delta();
+  test_list_field_shrinks();
+  test_list_field_refuses_overflow();
 
   // Values are chosen to survive write_coord, which keeps 5 fractional bits:
   // integers and multiples of 1/32 round-trip exactly, arbitrary floats do not.
