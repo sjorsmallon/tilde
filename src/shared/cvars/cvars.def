@@ -209,8 +209,8 @@ Aim :: cvars {
 
 // The Flashlight's cone (shared/reveal_light.hpp). @Mirrored: what a client draws as revealed and what the server makes solid are the same two numbers.
 Reveal_Light :: cvars {
-    sv_reveal_light_range:      f32 = 1024.0  @Mirrored  "How far a Flashlight reveals and lights, in world units"
-    sv_reveal_light_half_angle: f32 = 25.0    @Mirrored  "Half the opening angle of a Flashlight's cone, in degrees, at most 89"
+    sv_reveal_light_range:      f32 = 1256.0  @Mirrored  "How far a Flashlight reveals and lights, in world units"
+    sv_reveal_light_half_angle: f32 = 30.0    @Mirrored  "Half the opening angle of a Flashlight's cone, in degrees, at most 89"
     sv_reveal_light_overhead_height: f32 = 256.0 @Mirrored  "How far above its holder's eye an overhead Flashlight's cone starts, in world units"
 }
 

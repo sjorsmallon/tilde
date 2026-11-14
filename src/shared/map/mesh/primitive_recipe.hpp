@@ -27,7 +27,7 @@ const char *to_string(primitive_kind_t kind);
 [[nodiscard]] std::optional<primitive_kind_t> try_primitive_kind_from_text(std::string_view text);
 
 inline constexpr int MIN_PRISM_SIDES = 3;
-inline constexpr int MAX_PRISM_SIDES = 32;
+inline constexpr int MAX_PRISM_SIDES = 64;
 inline constexpr int MIN_ARCH_SEGMENTS = 1;
 inline constexpr int MAX_ARCH_SEGMENTS = 64;
 inline constexpr int MIN_STAIR_STEPS = 1;

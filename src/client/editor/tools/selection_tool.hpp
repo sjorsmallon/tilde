@@ -74,7 +74,7 @@ shared::entity_uid_t hovered_uid = 0;
   // this is armed by the connections panel.
   uid_pick_t uid_pick{};
 
-  // Ctrl+P arms it: the next viewport click names an entity and every selected ENTITY takes its
+  // Ctrl+P arms it: the next viewport click names an entity and every selected object, geometry included, takes its
   // position (Ctrl+Shift+P: its orientation too).
   struct snap_pick_t
   {

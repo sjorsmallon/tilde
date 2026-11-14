@@ -302,30 +302,30 @@ void Selection_Tool::snap_selected_entities_onto(editor_context_t& ctx, shared::
   const linalg::vec3  position    = target->entity->position;
   const linalg::quatf orientation = target->entity->orientation;
 
-  transaction_t transaction;
-  size_t        moved = 0;
+  std::vector<shared::entity_uid_t> moving;
   for (shared::entity_uid_t uid : selected_uids)
-  {
-    shared::map_entity_t* entry = ctx.map->find_by_uid(uid);
-    if (uid == target_uid || entry == nullptr || !entry->entity)
-      continue;
+    if (uid != target_uid)
+      moving.push_back(uid);
 
-    const entity_snapshot_t before = snapshot_entity(entry->entity.get());
-    entry->entity->position = position;
-    if (with_orientation)
-      entry->entity->orientation = orientation;
-    transaction.add_modified_from_diff(uid, before, entry->entity.get());
-    ++moved;
-  }
-
+  capture_drag_snapshots(ctx, moving);
+  const size_t moved = drag_baseline.origins.size();
   if (moved == 0)
   {
-    hud::set_announcement("Nothing snapped: the selection holds no other entity.");
+    drag_baseline.clear();
+    hud::set_announcement("Nothing snapped: the selection holds no other object.");
     return;
   }
 
-  ctx.transaction_system.push("Snap to entity", std::move(transaction));
-  hud::set_announcement(std::format("Snapped {} entit{} onto {}{}", moved, moved == 1 ? "y" : "ies",
+  for (const drag_origin_t& origin : drag_baseline.origins)
+  {
+    if (!shared::try_set_object_position(*ctx.map, origin.uid, position))
+      log_error("selection tool: object {} vanished during a snap", origin.uid);
+    if (with_orientation && !shared::try_set_object_orientation(*ctx.map, origin.uid, orientation))
+      log_error("selection tool: object {} took an orientation it cannot store", origin.uid);
+  }
+
+  commit_drag_snapshots(ctx, "Snap to entity");
+  hud::set_announcement(std::format("Snapped {} object{} onto {}{}", moved, moved == 1 ? "" : "s",
                                     shared::describe_map_entity(*ctx.map, target_uid),
                                     with_orientation ? ", orientation too" : ""));
 }
@@ -2426,12 +2426,12 @@ void Selection_Tool::on_key_down(editor_context_t& ctx, const key_event_t &e)
 
   if (e.key == input::key_t::P && e.mods.ctrl)
   {
-    const bool holds_an_entity =
+    const bool holds_an_object =
         ctx.map && std::any_of(selected_uids.begin(), selected_uids.end(), [&](shared::entity_uid_t uid)
-                               { return ctx.map->find_by_uid(uid) != nullptr; });
-    if (!holds_an_entity)
+                               { return shared::try_get_object_position(*ctx.map, uid).has_value(); });
+    if (!holds_an_object)
     {
-      hud::set_announcement("Select the entities to move first, then Ctrl+P.");
+      hud::set_announcement("Select the objects to move first, then Ctrl+P.");
       return;
     }
     uid_pick.disarm();
