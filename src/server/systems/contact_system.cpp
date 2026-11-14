@@ -497,7 +497,7 @@ static void apply_camera_swap(server_context_t& context, const pending_contact_t
 // Positional: the splash pushes everything a projectile can land on within the radius, measured
 // to each box's CENTER, and does not care what stopped the shot. A zero normal is an airburst.
 static void apply_explode(server_context_t& context, const pending_contact_t& contact,
-                          const shared::contact_explode_t& rule)
+                          const shared::contact_explode_t& rule, std::vector<pending_hit_t>& damage)
 {
   shared::Entity_System& entity_system = context.world.session.entity_system;
 
@@ -526,6 +526,21 @@ static void apply_explode(server_context_t& context, const pending_contact_t& co
                              .velocity   = push});
     else if (entities::Weapon_Entity* weapon = entity_system.get<entities::Weapon_Entity>(target.uid))
       shared::wake_bounce_body(weapon->bounce, push);
+    else if (rule.damage > 0.f && entity_system.get<entities::Damageable_Entity>(target.uid) != nullptr)
+    {
+      pending_hit_t hit{};
+      hit.info.victim_uid      = target.uid;
+      hit.info.attacker_uid    = contact.shooter_uid;
+      hit.info.inflictor_uid   = contact.shooter_uid;
+      hit.info.weapon_id       = static_cast<uint16_t>(contact.weapon);
+      hit.info.amount          = rule.damage;
+      hit.info.source_position = contact.point;
+      hit.info.type            = contact.damage_type;
+      hit.impact_point         = entity_center;
+      hit.impact_normal        = direction * -1.f;
+      hit.region               = entities::Hit_Region::Torso;
+      damage.push_back(hit);
+    }
   }
 
   shared::Rocket_Explosion explosion{};
@@ -619,7 +634,7 @@ static void apply_contact(server_context_t& context, const shared::predicted_wor
   case shared::contact_effect_t::Throw:      apply_throw(context, contact, rule.throw_); return;
   case shared::contact_effect_t::Teleport:   apply_teleport(context, contact); return;
   case shared::contact_effect_t::Freeze:     apply_freeze(context, contact, rule.freeze); return;
-  case shared::contact_effect_t::Explode:    apply_explode(context, contact, rule.explode); return;
+  case shared::contact_effect_t::Explode:    apply_explode(context, contact, rule.explode, damage); return;
   case shared::contact_effect_t::Land:       apply_land(context, world, contact); return;
   case shared::contact_effect_t::Leave_Zone: apply_leave_zone(context, contact); return;
   case shared::contact_effect_t::Merge:      apply_merge(context, contact, rule.merge); return;

@@ -26,6 +26,7 @@ struct Weapon_Entity : Entity
   uint64_t next_fire_time;
   uint32_t pickup_allowed_tick;
   Damage_Type damage_type;
+  float spin_degrees_per_second;
   Box_Volume volume;
   Bounce bounce;
   Render render;

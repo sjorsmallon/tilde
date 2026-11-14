@@ -103,6 +103,17 @@ bool light_is_switched_on(const entities::Entity &entity)
   return state == nullptr || state->value;
 }
 
+namespace
+{
+
+// Reversed depth: the planes are handed over swapped, so the near plane lands on depth 1 and the range on 0.
+linalg::mat4f reversed_depth_perspective(float fov_y_radians, float aspect, float near_plane, float far_plane)
+{
+  return linalg::perspective(fov_y_radians, aspect, far_plane, near_plane);
+}
+
+} // namespace
+
 shadow_projection_t spot_shadow_projection(const scene_light_t &light, uint32_t resolution)
 {
   const float cos_outer  = std::clamp(light.cos_outer, std::cos(linalg::to_radians(85.f)),
@@ -116,7 +127,7 @@ shadow_projection_t spot_shadow_projection(const scene_light_t &light, uint32_t 
 
   shadow_projection_t projection;
   projection.view_projection =
-      linalg::perspective(half_angle * 2.f, 1.f, SHADOW_NEAR_PLANE, far_plane) *
+      reversed_depth_perspective(half_angle * 2.f, 1.f, SHADOW_NEAR_PLANE, far_plane) *
       linalg::look_at(light.position, light.position + forward, up);
   projection.texel_size_at_unit_distance =
       2.f * std::tan(half_angle) / (float)std::max<uint32_t>(resolution, 1u);
@@ -147,7 +158,7 @@ linalg::mat4f projector_picture_matrix(const scene_light_t &light)
   const float            half_angle = projector_half_angle(light);
   const projector_axes_t axes       = projector_axes(light);
   const float            far_plane  = std::max(light.range, SHADOW_NEAR_PLANE * 2.f);
-  return linalg::perspective(half_angle * 2.f, std::max(light.aspect, 1e-3f), SHADOW_NEAR_PLANE, far_plane) *
+  return reversed_depth_perspective(half_angle * 2.f, std::max(light.aspect, 1e-3f), SHADOW_NEAR_PLANE, far_plane) *
          linalg::look_at(light.position, light.position + axes.forward, axes.up);
 }
 
@@ -283,7 +294,7 @@ shadow_cascades_t directional_shadow_cascades(const scene_light_t &light, const 
     const float        depth_range = 2.f * radius + caster_extent;
     const linalg::vec3 eye         = snapped_center - light_forward * (radius + caster_extent);
     cascade.projection.view_projection =
-        linalg::orthographic(-radius, radius, -radius, radius, 0.f, depth_range) *
+        linalg::orthographic(-radius, radius, -radius, radius, depth_range, 0.f) *
         linalg::look_at(eye, snapped_center, up_hint);
     cascade.projection.texel_size_at_unit_distance = texel;
     cascade.projection.near_plane                  = 0.f;
@@ -397,7 +408,7 @@ point_shadow_faces_t point_shadow_faces(const scene_light_t &light, const shadow
     const linalg::vec3   true_up = linalg::cross(right, forward);
 
     face.projection.view_projection =
-        linalg::perspective(fov, 1.f, SHADOW_NEAR_PLANE, result.range) *
+        reversed_depth_perspective(fov, 1.f, SHADOW_NEAR_PLANE, result.range) *
         linalg::look_at(light.position, light.position + forward, up);
     face.projection.texel_size_at_unit_distance = 2.f * tan_half / texel_count;
     face.projection.near_plane                  = SHADOW_NEAR_PLANE;

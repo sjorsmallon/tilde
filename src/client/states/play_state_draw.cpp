@@ -397,7 +397,7 @@ void Play_State::draw_map_geometry(client_context_t &ctx, const draw_inputs_t &f
       else if (owner != nullptr && owner->solid_only_in_shadow)
         light_cut = renderer::light_cut_t::shadow_solid;
       else if (owner != nullptr && owner->revealed_by_lens)
-        light_cut = renderer::get_light_cut_for_lens_filter(owner->lens_filter, owner->solid_only_when_lensed);
+        light_cut = renderer::get_light_cut_for_lens_filter(owner->lens_filter, owner->solid_only_when_viewed_through_a_lens);
 
       const linalg::mat4f* moved_by = moved != mover_matrices.end() ? &moved->second : nullptr;
       if (!ctx.cvars->debug_hide_geometry)
@@ -645,6 +645,26 @@ void Play_State::draw_rendered_entities(client_context_t &ctx, const draw_inputs
       scene.meshes.push_back(draw);
     }
   }
+}
+
+void Play_State::draw_laser_dot(client_context_t &ctx, const draw_inputs_t &frame)
+{
+  if (!frame.camera_is_my_eye || !ctx.visuals.drawn_laser_dot)
+    return;
+
+  const renderer::mesh_handle_t mesh = get_render_mesh(assets::get_mesh(assets::mesh_id("arrow")));
+  if (!mesh.valid())
+    return;
+
+  constexpr float HOVER = 100.f;
+  const shared::laser_dot_t& laser_dot = *ctx.visuals.drawn_laser_dot;
+
+  renderer::mesh_draw_t draw{};
+  draw.mesh               = mesh;
+  draw.transform          = linalg::compose_transform(laser_dot.position + laser_dot.normal * HOVER,
+                                                      quatf{0.f, 0.f, 0.f, 1.f}, vec3f{1.f, 1.f, 1.f});
+  draw.material_overrides = material_override(mesh, assets::material_asset::Missing);
+  scene.meshes.push_back(draw);
 }
 
 void Play_State::draw_afterimages_and_ghosts(client_context_t &ctx, const draw_inputs_t &frame)
@@ -1381,6 +1401,7 @@ void Play_State::draw(float delta_seconds, std::vector<renderer::view_pass_t> &p
 
   lap.next("draw: rendered entities");
   draw_rendered_entities(ctx, frame);
+  draw_laser_dot(ctx, frame);
 
   lap.next("draw: afterimages + ghosts");
   draw_afterimages_and_ghosts(ctx, frame);

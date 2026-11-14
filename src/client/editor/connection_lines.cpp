@@ -213,9 +213,10 @@ void draw_connection_lines(const shared::map_t& map, const viewport_state_t& vie
 std::optional<shared::entity_uid_t>
 draw_connection_overview(const shared::map_t& map,
                          Span<const shared::connection_refusal_t> refusals,
-                         connection_line_mode_t& mode, size_t& hovered_row)
+                         connection_line_mode_t& mode, size_t& hovered_row, size_t& row_to_remove)
 {
-  hovered_row = SIZE_MAX;
+  hovered_row   = SIZE_MAX;
+  row_to_remove = SIZE_MAX;
 
   ImGui::TextUnformatted("Show wiring");
   int selected_mode = (int)mode;
@@ -285,16 +286,20 @@ draw_connection_overview(const shared::map_t& map,
       if (ImGui::IsItemHovered())
         hovered_row = index;
 
-      ImGui::PopID();
-
       if (!is_refused)
+      {
+        ImGui::PopID();
         continue;
+      }
 
       ImGui::Indent();
       for (const shared::connection_refusal_t& refusal : refusals)
         if (refusal.index == index)
           ImGui::TextColored(REFUSED_TEXT_COLOR, "%s", refusal.reason.c_str());
+      if (ImGui::SmallButton("Remove this connection"))
+        row_to_remove = index;
       ImGui::Unindent();
+      ImGui::PopID();
     }
   }
   ImGui::EndChild();

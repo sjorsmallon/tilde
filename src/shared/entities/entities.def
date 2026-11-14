@@ -40,12 +40,13 @@ Weapon :: enum {
     Statue,
     Modifier_Gun,
     Extending_Platform,
-    Guided_Rocket,
+    Piloted_Rocket,
     Flashlight,
     Eraser,
     Merge,
     Red_Lens,
-    Camera_Swapper
+    Camera_Swapper,
+    Laser_Rocket
 }
 
 Fire_Resolution :: enum { None, Hitscan, Projectile, Self_Impulse, Zoom, Place, Canopy, Pilot, Recall, Reveal_Light, Reveal_Light_Overhead, Erase_Light, Lens_View }
@@ -255,6 +256,7 @@ Path_Follow :: component {
     segment_start_tick: u32 = 0     @Networked
     direction:          i32 = 1     @Networked
     frozen_at_tick:     u32 = 0     @Networked
+    started_tick:       u32 = 0     @Networked
 }
 
 // Carried rigidly by the Mover_Entity it names, from where it was placed, as that mover's brushes are (mover_def.md ss17).
@@ -392,7 +394,7 @@ Player_Entity :: entity @runtime_only @predicted is Mortal, Mobile, Armable, Res
     view_angle_yaw:    f32              @Networked
     view_angle_pitch:  f32              @Networked
     body_yaw:          f32              @Networked
-    // The screen this player looks through, restated on every input and clamped on arrival (shared::clamp_lens_view);
+    // The screen this player looks through, restated on every input and clamped on arrival (shared::clamp_field_of_view);
     // what it watches through a lens holds (shared::collect_lens_watchers). Exact: the client cuts its own from the same numbers.
     view_fov_degrees:  f32_exact = 90.0 @Networked
     view_aspect:       f32_exact = 1.7777778 @Networked
@@ -471,6 +473,8 @@ Weapon_Entity :: entity {
     next_fire_time:   u64               @Networked
     pickup_allowed_tick: u32
     damage_type: Damage_Type = .Normal  @Editable
+    // Drawn only: a lying weapon turns about the world's up on the client's clock. The server's stays still.
+    spin_degrees_per_second: f32 = 0.0  @Editable
     // The pickup reach and the thrown body's radius (its largest half extent).
     volume:           Box_Volume = { half_extents = {40, 40, 40} }
     bounce:           Bounce = { restitution = 0.2 }
@@ -528,22 +532,22 @@ Extending_Platform_Entity :: entity @runtime_only @predicted {
     length:         f32_exact  @Networked
     max_length:     f32 = 1024.0
     extend_speed:   f32 = 1200.0
-    // The Extending Platform's own; a guided rocket's path writes its row's.
+    // The Extending Platform's own; a piloted rocket's path writes its row's.
     solid_seconds:  f32 = 6.0
-    // The Extending Platform's own; a guided rocket's path writes its row's.
+    // The Extending Platform's own; a piloted rocket's path writes its row's.
     half_width:     f32_exact = 32.0 @Networked
     half_thickness: f32 = 4.0
     // Not solid for this long after it is set down, so whoever it was set down in can get on top of it.
-    // The Extending Platform's own; a guided rocket's path writes 0.
+    // The Extending Platform's own; a piloted rocket's path writes 0.
     passable_seconds: f32_exact = 0.5 @Networked
     render:         Render = { mesh = .Box, color = {0.95, 0.55, 0.85} }
 }
 
 // What everyone but the pilot sees of a Pilot override; it follows the pilot's Movement and flies nothing itself.
-Guided_Rocket_Entity :: entity @runtime_only {
+Piloted_Rocket_Entity :: entity @runtime_only {
     pilot_uid: entity          @Networked
     // The row the flight was launched off, which says what it leaves behind.
-    weapon_id: Weapon = .Guided_Rocket
+    weapon_id: Weapon = .Piloted_Rocket
     render:    Render = { mesh = .rocket }
 }
 
@@ -728,7 +732,7 @@ Geometry_Owner_Entity :: entity @predicted is Switchable {
     lens_filter: Lens_Filter = .Red @Networked @Editable
     // Its geometry is solid only where some player's eye sees it through a lens that passes `lens_filter`:
     // what is watched holds, for everyone. Unset, it is solid wherever the switch says so.
-    solid_only_when_lensed: bool = false @Networked @Editable
+    solid_only_when_viewed_through_a_lens: bool = false @Networked @Editable
     // Its geometry is absent from the bake and drawn into every shadow map each frame, so its shadow is
     // what the geometry is NOW: gone when switched off, a keyhole when it wears one. Needs a Mixed or
     // Dynamic light to cast at all.
@@ -763,6 +767,8 @@ Path_Node_Entity :: entity {
 Mover_Entity :: entity @predicted is Switchable, Path_Following {
     switch_state: Enabled
     follow:       Path_Follow
+    spin_axis:               v3 = {0, 1, 0}   @Editable
+    spin_degrees_per_second: f32 = 0.0        @Editable
 }
 
 // Fires the weapon row's projectile along its orientation, once per Fire. The cadence is wiring: a Logic_Timer's Elapsed.

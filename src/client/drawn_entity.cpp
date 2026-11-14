@@ -2,8 +2,8 @@
 #include "entities/generated/entities/canopy_entity_generated.hpp"
 #include "entities/generated/entities/emancipated_weapon_entity_generated.hpp"
 #include "entities/generated/entities/extending_platform_entity_generated.hpp"
-#include "entities/generated/entities/guided_rocket_entity_generated.hpp"
 #include "entities/generated/entities/lens_entity_generated.hpp"
+#include "entities/generated/entities/piloted_rocket_entity_generated.hpp"
 #include "entities/generated/entities/ping_marker_entity_generated.hpp"
 #include "entities/generated/entities/platform_entity_generated.hpp"
 #include "entities/generated/entities/shrinking_platform_entity_generated.hpp"
@@ -206,14 +206,21 @@ void compute_drawn_entity_poses_at_tick(const client_context_t& ctx, const entit
 
   // A held weapon is the viewmodel's and draws nowhere in the world.
   case entity_type::Weapon_Entity:
-    if (static_cast<const entities::Weapon_Entity&>(entity).owner_uid != shared::null_entity_uid)
+  {
+    const auto& weapon = static_cast<const entities::Weapon_Entity&>(entity);
+    if (weapon.owner_uid != shared::null_entity_uid)
       return;
+
+    const double seconds = ((double)drawn.tick + (double)drawn.fraction) / (double)drawn.tickrate_hz;
+    const float  degrees = (float)std::fmod((double)weapon.spin_degrees_per_second * seconds, 360.0);
+    out.orientation      = linalg::from_axis_angle({0.0f, 1.0f, 0.0f}, degrees) * out.orientation;
     poses.push_back(out);
     return;
+  }
 
   // The pilot rides the predicted flight; the replicated rocket is everyone else's.
-  case entity_type::Guided_Rocket_Entity:
-    if (static_cast<const entities::Guided_Rocket_Entity&>(entity).pilot_uid == ctx.connection.my_entity_uid)
+  case entity_type::Piloted_Rocket_Entity:
+    if (static_cast<const entities::Piloted_Rocket_Entity&>(entity).pilot_uid == ctx.connection.my_entity_uid)
       return;
     poses.push_back(out);
     return;

@@ -1,4 +1,4 @@
-// The pin for guided_rocket_plan.md step 2: which positions of a flight become vertices, and the boxes
+// The pin for piloted_rocket_plan.md step 2: which positions of a flight become vertices, and the boxes
 // the edges between them become.
 #include "color_map.hpp"
 #include "collision/flight_path.hpp"

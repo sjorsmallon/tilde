@@ -224,7 +224,7 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
 
     client_slot_t&                 client        = context.clients[client_slot];
     entities::Player_Entity&       player        = *accepted.player;
-    const shared::Tick_Input& tick_input = accepted.tick_input;
+    const shared::Tick_Input& tick_input_sent_by_client = accepted.tick_input;
 
     shared::queue_replay_player_view(
         context.world.replay_recorder,
@@ -232,16 +232,17 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
                                               {.from_tick    = input.interpolated_from_tick,
                                                .towards_tick = input.interpolated_towards_tick,
                                                .fraction     = input.interpolation_fraction},
-                                              tick_input));
+                                              tick_input_sent_by_client));
 
     const uint64_t buttons_before_tick = client.latest_buttons_bitmap;
-    client.latest_buttons_bitmap       = shared::buttons_at_end_of_tick(tick_input);
-    const std::optional<shared::View> steering_view = try_find_steering_view_for_player(context, player);
+    client.latest_buttons_bitmap       = shared::buttons_at_end_of_tick(tick_input_sent_by_client);
+    const shared::Tick_Input tick_input_to_apply = shared::get_tick_input_to_apply_to_player(
+        tick_input_sent_by_client, try_find_steering_view_for_player(context, player));
 
-    const shared::lens_watch_screen_t screen = shared::clamp_lens_watch_screen(
-        {.fov_degrees = input.view_fov_degrees, .aspect = input.view_aspect});
-    player.view_fov_degrees = screen.fov_degrees;
-    player.view_aspect      = screen.aspect;
+    const shared::field_of_view_t field_of_view = shared::clamp_field_of_view(
+        {.vertical_degrees = input.view_fov_degrees, .aspect = input.view_aspect});
+    player.view_fov_degrees = field_of_view.vertical_degrees;
+    player.view_aspect      = field_of_view.aspect;
 
     const bool is_dead = player.health.current_health <= 0;
 
@@ -256,17 +257,14 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
                                   context.world.session.entity_system, player.entity_id) != nullptr};
 
     const shared::subtick_steps_t steps =
-        shared::split_tick_input_into_subtick_steps(tick_input, tick_dt);
+        shared::split_tick_input_into_subtick_steps(tick_input_to_apply, tick_dt);
 
     Move_Events move_events{};
     uint64_t    buttons_entering_step = buttons_before_tick;
 
-    for (const shared::subtick_step_t& input_step : steps)
+    for (const shared::subtick_step_t& step : steps)
     {
-      shared::subtick_step_t step = input_step;
-      if (steering_view)
-        step.view = step.view_at_end = *steering_view;
-      const uint64_t               pressed_in_this_step = step.buttons & ~buttons_entering_step;
+      const uint64_t              pressed_in_this_step = step.buttons & ~buttons_entering_step;
       const shared::subtick_time_t step_time = shared::subtick_time(context.tick_number, step.start_slot);
       const vec3f                  aim       = linalg::direction_from_angles(step.view.yaw, step.view.pitch);
 
@@ -320,9 +318,8 @@ void update_player_inputs(server_context_t& context, const shared::predicted_wor
 
     if (!is_dead && !world_is_frozen)
     {
-      const shared::View head = steering_view.value_or(tick_input.view_at_end);
-      player.view_angle_yaw   = head.yaw;
-      player.view_angle_pitch = head.pitch;
+      player.view_angle_yaw   = tick_input_to_apply.view_at_end.yaw;
+      player.view_angle_pitch = tick_input_to_apply.view_at_end.pitch;
     }
 
     fire_move_event_effects(context, player, world, move_events);

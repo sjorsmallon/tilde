@@ -342,8 +342,8 @@ constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINITIONS =
                                  .world_impact = assets::NO_ASSET_NAME}},
     // The shooter rides the rocket: the body holds, the aim is the heading, a second press lets go.
     // The path lies an eye's height under the flight, so the flight is the view of whoever walks it.
-    {.weapon                        = entities::Weapon::Guided_Rocket,
-     .display_name                  = "Guided Rocket",
+    {.weapon                        = entities::Weapon::Piloted_Rocket,
+     .display_name                  = "Piloted Rocket",
      .slot                          = entities::Inventory_Slot::Primary,
      .fire_interval_seconds         = 0.f,
      .deploy_duration_seconds       = 0.f,
@@ -428,6 +428,31 @@ constexpr Enum_Array<entities::Weapon, weapon_definition_t> WEAPON_DEFINITIONS =
                                  .contact    = {.effect = contact_effect_t::Camera_Swap}},
      .sounds                  = {.fire         = assets::NO_ASSET_NAME,
                                  .world_impact = assets::NO_ASSET_NAME}},
+    // A slow rocket that heads for wherever its owner's view ray lands, for as long as the owner holds the weapon.
+    {.weapon                  = entities::Weapon::Laser_Rocket,
+     .display_name            = "Laser Rocket",
+     .slot                    = entities::Inventory_Slot::Secondary,
+     .fire_interval_seconds   = 1.f,
+     .deploy_duration_seconds = 0.9f,
+     .magazine_size           = 0,
+     .reload_duration_seconds = 0.f,
+     .limit                   = {.max_alive = 1, .at_limit = at_limit_t::Replace_Oldest},
+     .primary_fire            = {.resolution = entities::Fire_Resolution::Projectile,
+                                 .projectile = {.speed         = 600.f,
+                                                .gravity_scale = 0.f,
+                                                .spawns = entities::entity_type::Shot_Entity,
+                                                .expiry = projectile_expiration_t::Arrives,
+                                                .shot   = {.lifetime_seconds = 20.f,
+                                                          .collision_radius = 12.f,
+                                                          .mesh             = "rocket",
+                                                          .scale            = {1.f, 1.f, 1.f},
+                                                          .color            = {1.f, 1.f, 1.f}},
+                                                .guide_range = 10000.f,
+                                                .guide_turn_degrees_per_second = 180.f},
+                                 .contact    = {.effect  = contact_effect_t::Explode,
+                                                .explode = {.radius = 120.f, .knockback = 600.f, .damage = 100.f}}},
+     .sounds                  = {.fire         = assets::NO_ASSET_NAME,
+                                 .world_impact = assets::NO_ASSET_NAME}},
 }};
 
 // The one check, and it has to carry both failures.
@@ -508,7 +533,8 @@ constexpr bool contact_parameters_match_effect(const contact_t& contact)
   const bool throw_is_zero   = contact.throw_.subject == contact_subject_t::Target;
   const bool freeze_is_zero  = contact.freeze.kind == entities::Movement_Override::None &&
                                contact.freeze.seconds == 0.f;
-  const bool explode_is_zero = contact.explode.radius == 0.f && contact.explode.knockback == 0.f;
+  const bool explode_is_zero = contact.explode.radius == 0.f && contact.explode.knockback == 0.f &&
+                               contact.explode.damage == 0.f;
   const bool merge_is_zero   = contact.merge.seconds == 0.f;
   const bool aims_at_bodies  = contact.targets == contact_targets_t::Bodies;
 
@@ -563,7 +589,8 @@ constexpr bool fire_parameters_match_resolution(const weapon_fire_t& fire)
   const bool projectile_is_zero = projectile.speed == 0.f && projectile.gravity_scale == 0.f &&
                                   projectile.spawns == entities::entity_type::Invalid &&
                                   projectile.expiry == projectile_expiration_t::Vanishes &&
-                                  shot_is_zero(projectile.shot);
+                                  shot_is_zero(projectile.shot) && projectile.guide_range == 0.f &&
+                                  projectile.guide_turn_degrees_per_second == 0.f;
   const bool shot_matches_spawn = projectile.spawns == entities::entity_type::Shot_Entity
                                       ? shot_is_filled(projectile.shot)
                                       : shot_is_zero(projectile.shot);

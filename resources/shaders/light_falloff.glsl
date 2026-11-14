@@ -49,11 +49,12 @@ INLINE float spot_cone_factor(float cos_angle, float cos_inner, float cos_outer)
     return clamp((cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.001), 0.0, 1.0);
 }
 
+// A shadow map stores REVERSED depth: 1 at the near plane, 0 at the far plane.
 INLINE float shadow_linear_depth(float ndc_z, float near_plane, float far_plane, bool orthographic)
 {
     if (orthographic)
-        return near_plane + ndc_z * (far_plane - near_plane);
-    return far_plane * near_plane / max(far_plane - ndc_z * (far_plane - near_plane), 0.0001);
+        return far_plane - ndc_z * (far_plane - near_plane);
+    return far_plane * near_plane / max(near_plane + ndc_z * (far_plane - near_plane), 0.0001);
 }
 
 // Penumbra half-width in texels; with blocker_depth = near_plane it is the blocker SEARCH radius.

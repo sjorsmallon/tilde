@@ -67,6 +67,7 @@ Weapon_Entity::Weapon_Entity()
     next_fire_time{},
     pickup_allowed_tick{},
     damage_type(Damage_Type::Normal),
+    spin_degrees_per_second(0.0f),
     volume({.half_extents = {40.0f, 40.0f, 40.0f}}),
     bounce({.restitution = 0.2f}),
     render({.mesh = assets::mesh_id("Error")})
@@ -122,12 +123,12 @@ Extending_Platform_Entity::Extending_Platform_Entity()
   type = entity_type::Extending_Platform_Entity;
 }
 
-Guided_Rocket_Entity::Guided_Rocket_Entity()
+Piloted_Rocket_Entity::Piloted_Rocket_Entity()
   : pilot_uid{},
-    weapon_id(Weapon::Guided_Rocket),
+    weapon_id(Weapon::Piloted_Rocket),
     render({.mesh = assets::mesh_id("rocket")})
 {
-  type = entity_type::Guided_Rocket_Entity;
+  type = entity_type::Piloted_Rocket_Entity;
 }
 
 Canopy_Entity::Canopy_Entity()
@@ -278,7 +279,7 @@ Geometry_Owner_Entity::Geometry_Owner_Entity()
     erased_in_shadow(false),
     revealed_by_lens(false),
     lens_filter(Lens_Filter::Red),
-    solid_only_when_lensed(false),
+    solid_only_when_viewed_through_a_lens(false),
     casts_dynamic_shadow(false),
     casts_solid_from_lens(false)
 {
@@ -311,7 +312,9 @@ Path_Node_Entity::Path_Node_Entity()
 
 Mover_Entity::Mover_Entity()
   : switch_state{},
-    follow{}
+    follow{},
+    spin_axis({0.0f, 1.0f, 0.0f}),
+    spin_degrees_per_second(0.0f)
 {
   type = entity_type::Mover_Entity;
 }

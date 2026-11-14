@@ -106,22 +106,22 @@ std::optional<entities::Lens_Filter> try_get_held_lens_filter(const Entity_Syste
   return held->primary_fire.lens_view.filter;
 }
 
-lens_watch_screen_t clamp_lens_watch_screen(const lens_watch_screen_t& view)
+field_of_view_t clamp_field_of_view(const field_of_view_t& view)
 {
-  return {.fov_degrees = std::clamp(view.fov_degrees, LENS_WATCH_SCREEN_FOV_DEGREES_MIN, LENS_WATCH_SCREEN_FOV_DEGREES_MAX),
-          .aspect      = std::clamp(view.aspect, LENS_WATCH_SCREEN_ASPECT_MIN, LENS_WATCH_SCREEN_ASPECT_MAX)};
+  return {.vertical_degrees = std::clamp(view.vertical_degrees, FIELD_OF_VIEW_DEGREES_MIN, FIELD_OF_VIEW_DEGREES_MAX),
+          .aspect      = std::clamp(view.aspect, FIELD_OF_VIEW_ASPECT_MIN, FIELD_OF_VIEW_ASPECT_MAX)};
 }
 
 lens_watcher_t compute_lens_watcher(const linalg::vec3f& eye, float yaw_degrees, float pitch_degrees,
-                                    const lens_watch_screen_t& view, uint32_t held_channels)
+                                    const field_of_view_t& view, uint32_t held_channels)
 {
   const linalg::vec3f forward = linalg::direction_from_angles(yaw_degrees, pitch_degrees);
   const linalg::vec3f right   = linalg::right_from_forward(forward);
   const linalg::vec3f up      = linalg::cross(right, forward);
 
-  const lens_watch_screen_t bounded    = clamp_lens_watch_screen(view);
-  const float       vertical   = linalg::to_radians(bounded.fov_degrees) * 0.5f;
-  const float       horizontal = std::atan(std::tan(vertical) * bounded.aspect);
+  const field_of_view_t bounded    = clamp_field_of_view(view);
+  const float           vertical   = linalg::to_radians(bounded.vertical_degrees) * 0.5f;
+  const float           horizontal = std::atan(std::tan(vertical) * bounded.aspect);
   const float sine_h = std::sin(horizontal), cosine_h = std::cos(horizontal);
   const float sine_v = std::sin(vertical), cosine_v = std::cos(vertical);
 
@@ -163,7 +163,7 @@ void compute_lens_watchers(Span<const player_sight_t> sights, std::vector<lens_w
     if (!sight.alive)
       continue;
     out.push_back(compute_lens_watcher(player_eye_position(sight.feet), sight.view_entering_tick.yaw,
-                                       sight.view_entering_tick.pitch, sight.screen, held_lens_channels(sight)));
+                                       sight.view_entering_tick.pitch, sight.field_of_view, held_lens_channels(sight)));
   }
 }
 

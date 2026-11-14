@@ -691,13 +691,14 @@ struct tonemap_settings_t
 {
   // Multiplies the HDR value before the curve. r_exposure.
   float exposure = 1.0f;
-  // The cut wipe (r_cut_wipe_*). While `keep_last_frame`, the tonemapped frame and its depth are copied aside
-  // after the tonemap pass. A `cut_wipe_fraction` from 0 to 1 draws that kept frame over this one wherever the
-  // kept surface is farther than the fraction's depth (`cut_wipe_distance` at one half, the horizon at one), so
-  // a cut in the eye's place peels the old view away from the feet outwards. Below 0 is no wipe.
-  bool  keep_last_frame   = false;
-  float cut_wipe_fraction = -1.0f;
-  float cut_wipe_distance = 128.0f;
+  // The teleport visual transition wipe (r_teleport_visual_transition_wipe_*). While `keep_last_frame`, the
+  // tonemapped frame and its depth are copied aside after the tonemap pass. A
+  // `teleport_visual_transition_wipe_fraction` from 0 to 1 draws that kept frame over this one wherever the kept
+  // surface is farther than the fraction's depth (`teleport_visual_transition_wipe_distance` at one half, the
+  // horizon at one), so a teleport of the eye peels the old view away from the feet outwards. Below 0 is no wipe.
+  bool  keep_last_frame                          = false;
+  float teleport_visual_transition_wipe_fraction = -1.0f;
+  float teleport_visual_transition_wipe_distance = 128.0f;
   // The lens view, 0 to 1: how far the scene colour has given way to a page of `lens_view_color` under the ink.
   float lens_view_fraction = 0.0f;
   vec3f lens_view_color    = {1.0f, 1.0f, 1.0f};

@@ -7,12 +7,23 @@
 #include <format>
 
 // Tab walks a multi-selection one member at a time. The selection stays the
-// group, so a drag, a delete or a copy still reaches all of it; the inspector
-// and the outline follow the focused member alone, and the gizmo stays where
-// the group is.
+// group, so a Ctrl+drag, a delete or a copy still reaches all of it; the
+// inspector, the outline and the gizmo follow the focused member alone.
 
 namespace client
 {
+
+Span<const shared::entity_uid_t> Selection_Tool::gizmo_target_uids() const
+{
+  if (focused_uid && selected_uids.size() > 1)
+  {
+    const std::vector<shared::entity_uid_t>::const_iterator at =
+        std::find(selected_uids.begin(), selected_uids.end(), *focused_uid);
+    if (at != selected_uids.end())
+      return {&*at, 1};
+  }
+  return selected_uids;
+}
 
 void Selection_Tool::cycle_focus(bool backwards)
 {

@@ -66,19 +66,19 @@ inline constexpr uint32_t LENS_CHANNEL_ALL   = LENS_CHANNEL_RED | LENS_CHANNEL_G
 // Every switched-on Lens_Entity's box.
 void compute_lenses(const Entity_System& system, std::vector<lens_t>& out);
 
-// A watcher: an eye and the frustum it sees. Geometry whose owner is `solid_only_when_lensed` is solid, for
+// A watcher: an eye and the frustum it sees. Geometry whose owner is `solid_only_when_viewed_through_a_lens` is solid, for
 // everyone, where some watcher sees it through a lens that passes its colour
 // (collision_detection.hpp's GEOMETRY_SOLID_WHERE_LENSED): what is watched holds. The frustum is the
 // player's own screen (Player_Entity::view_fov_degrees and view_aspect, restated on every input), clamped
 // on arrival: the server cannot verify what a client claims to see, only bound it.
 inline constexpr uint32_t LENS_WATCH_SIDE_COUNT = 4;
 
-inline constexpr float LENS_WATCH_SCREEN_FOV_DEGREES_MIN = 20.f;
-inline constexpr float LENS_WATCH_SCREEN_FOV_DEGREES_MAX = 120.f;
-inline constexpr float LENS_WATCH_SCREEN_ASPECT_MIN      = 0.5f;
-inline constexpr float LENS_WATCH_SCREEN_ASPECT_MAX      = 3.6f;
+inline constexpr float FIELD_OF_VIEW_DEGREES_MIN = 20.f;
+inline constexpr float FIELD_OF_VIEW_DEGREES_MAX = 120.f;
+inline constexpr float FIELD_OF_VIEW_ASPECT_MIN      = 0.5f;
+inline constexpr float FIELD_OF_VIEW_ASPECT_MAX      = 3.6f;
 
-[[nodiscard]] lens_watch_screen_t clamp_lens_watch_screen(const lens_watch_screen_t& view);
+[[nodiscard]] field_of_view_t clamp_field_of_view(const field_of_view_t& view);
 
 struct lens_watcher_t
 {
@@ -87,9 +87,9 @@ struct lens_watcher_t
   uint32_t                            held_channels = 0;
 };
 
-// The sides face outward, through the eye: left, right, bottom, top. `fov_degrees` is the view's height.
+// The sides face outward, through the eye: left, right, bottom, top. `vertical_degrees` is the view's height.
 [[nodiscard]] lens_watcher_t compute_lens_watcher(const linalg::vec3f& eye, float yaw_degrees, float pitch_degrees,
-                                                  const lens_watch_screen_t& view, uint32_t held_channels);
+                                                  const field_of_view_t& view, uint32_t held_channels);
 
 [[nodiscard]] bool lens_watcher_faces_point(const lens_watcher_t& watcher, const linalg::vec3f& point);
 

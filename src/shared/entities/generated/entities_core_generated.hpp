@@ -77,15 +77,16 @@ enum class Weapon : uint8_t
   Statue = 15,
   Modifier_Gun = 16,
   Extending_Platform = 17,
-  Guided_Rocket = 18,
+  Piloted_Rocket = 18,
   Flashlight = 19,
   Eraser = 20,
   Merge = 21,
   Red_Lens = 22,
   Camera_Swapper = 23,
+  Laser_Rocket = 24,
 };
 
-constexpr uint32_t Weapon_COUNT = 24;
+constexpr uint32_t Weapon_COUNT = 25;
 
 const char* to_string(Weapon value);
 template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text);
@@ -382,7 +383,7 @@ enum class entity_type : uint16_t
   Platform_Entity = 6,
   Shrinking_Platform_Entity = 7,
   Extending_Platform_Entity = 8,
-  Guided_Rocket_Entity = 9,
+  Piloted_Rocket_Entity = 9,
   Canopy_Entity = 10,
   Bubble_Entity = 11,
   Damageable_Entity = 12,
@@ -760,6 +761,7 @@ struct Path_Follow
   uint32_t segment_start_tick = 0;
   int32_t direction = 1;
   uint32_t frozen_at_tick = 0;
+  uint32_t started_tick = 0;
 };
 
 struct Rides

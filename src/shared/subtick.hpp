@@ -5,6 +5,7 @@
 #include "tick_clock.hpp"
 
 #include <cstdint>
+#include <optional>
 
 namespace shared
 {
@@ -201,6 +202,11 @@ struct subtick_steps_t
 // would make its duration depend on every step before it.
 subtick_steps_t split_tick_input_into_subtick_steps(const Tick_Input& input,
                                                         float tick_dt);
+
+// The input a player's steps run under: its own client's buttons, and, while another player steers its view
+// (camera_swap.hpp), that player's view at every point of the tick instead of its own client's.
+[[nodiscard]] Tick_Input get_tick_input_to_apply_to_player(const Tick_Input& input_sent_by_players_client,
+                                                           const std::optional<View>& view_of_player_steering_its_view);
 
 // Every button that went DOWN at any point in the tick, against the state the
 // client was last known to be in. A press and its release inside one tick still

@@ -38,7 +38,7 @@ player_sight_t player_sight_from_entity(const Entity_System& system, const entit
           .toggles               = {.reveal_light_on       = player.reveal_light_on,
                                     .reveal_light_overhead = player.reveal_light_overhead,
                                     .held_lens_on          = player.held_lens_on},
-          .screen                = {.fov_degrees = player.view_fov_degrees, .aspect = player.view_aspect},
+          .field_of_view         = {.vertical_degrees = player.view_fov_degrees, .aspect = player.view_aspect},
           .wielded_reveal_kind   = wielded_reveal_kind(system, player),
           .wielded_lens_channels = lens_filter ? get_channel_bits_for_lens_filter(*lens_filter) : 0};
 }

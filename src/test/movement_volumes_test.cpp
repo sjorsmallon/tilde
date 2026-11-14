@@ -515,7 +515,7 @@ static void test_a_team_wall_is_not_there_for_its_team_and_visible_to_everyone()
   check(disabled[1] == GEOMETRY_NOT_THERE, "and not there for the team that passes it");
 
   system.get<entities::Geometry_Owner_Entity>(owner)->erased_by_light        = false;
-  system.get<entities::Geometry_Owner_Entity>(owner)->solid_only_when_lensed = true;
+  system.get<entities::Geometry_Owner_Entity>(owner)->solid_only_when_viewed_through_a_lens = true;
   system.get<entities::Geometry_Owner_Entity>(owner)->lens_filter            = entities::Lens_Filter::Blue;
   shared::compute_disabled_geometry(system, owner_of, entities::Team_Allegiance::Blu, disabled);
   check(disabled[1] == get_geometry_state_solid_where_lensed(entities::Lens_Filter::Blue),

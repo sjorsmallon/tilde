@@ -668,15 +668,22 @@ bool Tick()
     const client_context_t    &context = state_manager::get_client_context();
     const cvars::cvar_state_t &cvars   = *context.cvars;
 
-    // While no cut is peeling, the frame is kept aside each frame so the next cut has the view it left; while
-    // one is, the kept frame stays the one before the cut.
-    const bool cut_wipe_on = cvars.r_cut_wipe_seconds > 0.0f;
-    const bool cut_wiping  = cut_wipe_on && context.visuals.cut_wipe_seconds >= 0.0f;
+    // While no teleport wipe is drawing, the frame is kept aside each frame so the next teleport has the view it
+    // left; while one is, the kept frame stays the one before the teleport.
+    const bool teleport_visual_transition_wipe_enabled =
+        cvars.r_teleport_visual_transition_wipe_seconds > 0.0f;
+    const bool teleport_visual_transition_wipe_in_progress =
+        teleport_visual_transition_wipe_enabled &&
+        context.visuals.teleport_visual_transition_wipe_elapsed_seconds >= 0.0f;
     renderer::tonemap_settings_t tonemap;
     tonemap.exposure          = cvars.r_exposure;
-    tonemap.keep_last_frame   = cut_wipe_on && !cut_wiping;
-    tonemap.cut_wipe_fraction = cut_wiping ? context.visuals.cut_wipe_seconds / cvars.r_cut_wipe_seconds : -1.0f;
-    tonemap.cut_wipe_distance = cvars.r_cut_wipe_distance;
+    tonemap.keep_last_frame   = teleport_visual_transition_wipe_enabled && !teleport_visual_transition_wipe_in_progress;
+    tonemap.teleport_visual_transition_wipe_fraction =
+        teleport_visual_transition_wipe_in_progress
+            ? context.visuals.teleport_visual_transition_wipe_elapsed_seconds /
+                  cvars.r_teleport_visual_transition_wipe_seconds
+            : -1.0f;
+    tonemap.teleport_visual_transition_wipe_distance = cvars.r_teleport_visual_transition_wipe_distance;
     tonemap.lens_view_fraction = context.visuals.lens_view_fraction;
     tonemap.lens_view_color    = shared::get_color_for_lens_filter(context.visuals.lens_view_filter);
     renderer::look_settings_t look;

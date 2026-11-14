@@ -6,6 +6,7 @@
 #include "map/map.hpp"
 #include "map/map_connection.hpp"
 
+#include <cmath>
 #include <format>
 
 namespace shared
@@ -126,11 +127,17 @@ path_pose_t mover_pose_at(const Entity_System& system, const path_links_t& links
                           const entities::Mover_Entity& mover, const path_pose_t& rest,
                           uint32_t tick, uint32_t tickrate_hz)
 {
-  const std::optional<path_pose_t> pose =
+  const std::optional<path_pose_t> followed =
       try_path_pose_at(system, links, mover.follow, tick, tickrate_hz);
-  if (pose)
-    return *pose;
-  return rest;
+  path_pose_t pose = followed ? *followed : rest;
+
+  if (mover.spin_degrees_per_second != 0.0f)
+  {
+    const double seconds = (double)path_running_ticks(mover.follow, tick) / (double)tickrate_hz;
+    const float  degrees = (float)std::fmod((double)mover.spin_degrees_per_second * seconds, 360.0);
+    pose.orientation     = pose.orientation * linalg::from_axis_angle(mover.spin_axis, degrees);
+  }
+  return pose;
 }
 
 linalg::vec3f apply_mover_pose(const path_pose_t& rest, const path_pose_t& pose,

@@ -550,6 +550,45 @@ void setpos(float x, float y, float z, const command_context_t &command_context)
   player->velocity = {};
 }
 
+void give_weapon(std::string_view weapon_name, const command_context_t &command_context)
+{
+  using namespace server;
+  server_context_t &server_context = g_server_context;
+
+  entities::Player_Entity *player = nullptr;
+  if (is_valid_client_slot(command_context.caller_slot))
+    player = server_context.world.session.entity_system.get<entities::Player_Entity>(
+        server_context.clients[command_context.caller_slot].player_uid);
+  if (!player)
+  {
+    log_error("give_weapon: no Player_Entity for caller_slot {}", command_context.caller_slot);
+    return;
+  }
+
+  const auto equals_ignoring_case = [](std::string_view left, std::string_view right) {
+    return std::ranges::equal(left, right, [](char a, char b) {
+      return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+    });
+  };
+
+  std::string known_names;
+  for (uint32_t index = 0; index < enum_traits<entities::Weapon>::count; ++index)
+  {
+    const entities::Weapon weapon = static_cast<entities::Weapon>(index);
+    const std::string_view name   = entities::to_string(weapon);
+    if (equals_ignoring_case(name, weapon_name))
+    {
+      if (try_grant_weapon(server_context, *player, player->inventory, weapon) == shared::null_entity_uid)
+        log_error("give_weapon: could not spawn a {} for slot {}", name, command_context.caller_slot);
+      return;
+    }
+    known_names += known_names.empty() ? "" : ", ";
+    known_names += name;
+  }
+
+  log_error("give_weapon: '{}' is not a weapon; one of {}", weapon_name, known_names);
+}
+
 void noclip(const command_context_t &command_context)
 {
   using namespace server;

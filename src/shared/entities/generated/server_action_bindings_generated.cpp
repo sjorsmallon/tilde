@@ -565,7 +565,7 @@ constexpr action_shim_fn ACTION_DISPATCH[ENTITY_TYPE_COUNT][ENTITY_ACTION_COUNT]
   {},   // Platform_Entity
   {},   // Shrinking_Platform_Entity
   {},   // Extending_Platform_Entity
-  {},   // Guided_Rocket_Entity
+  {},   // Piloted_Rocket_Entity
   {},   // Canopy_Entity
   {},   // Bubble_Entity
   {   // Damageable_Entity

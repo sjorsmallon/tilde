@@ -122,7 +122,7 @@ float sample_shadow_layer(int layer, Light_Arrival arrival, vec3 world_position,
     if (clip.w <= 0.0)
         return 1.0;
     vec3 ndc = clip.xyz / clip.w;
-    if (ndc.z >= 1.0)
+    if (ndc.z <= 0.0)
         return 1.0;
 
     vec2 uv       = ndc.xy * 0.5 + 0.5;
@@ -150,7 +150,7 @@ float sample_shadow_layer(int layer, Light_Arrival arrival, vec3 world_position,
         {
             vec2  offset = rotation * PCSS_POISSON_DISC[tap] * search_radius * texel_uv;
             float depth  = shadow_depth(layer, uv + offset);
-            if (depth < ndc.z)
+            if (depth > ndc.z)
             {
                 blocker_depth_sum += depth;
                 ++blocker_count;

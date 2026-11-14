@@ -44,12 +44,13 @@ constexpr const char* Weapon_VALUE_NAMES[] = {
   "Statue",
   "Modifier_Gun",
   "Extending_Platform",
-  "Guided_Rocket",
+  "Piloted_Rocket",
   "Flashlight",
   "Eraser",
   "Merge",
   "Red_Lens",
   "Camera_Swapper",
+  "Laser_Rocket",
 };
 
 constexpr const char* Fire_Resolution_VALUE_NAMES[] = {
@@ -196,7 +197,7 @@ constexpr const char* Movement_Override_VALUE_NAMES[] = {
 constexpr enum_type_info_t ENUM_INFOS[ENUM_TYPE_COUNT] = {
   {"Spawn_Type", {Spawn_Type_VALUE_NAMES, 2}},
   {"Team_Allegiance", {Team_Allegiance_VALUE_NAMES, 3}},
-  {"Weapon", {Weapon_VALUE_NAMES, 24}},
+  {"Weapon", {Weapon_VALUE_NAMES, 25}},
   {"Fire_Resolution", {Fire_Resolution_VALUE_NAMES, 13}},
   {"Fire_Trigger", {Fire_Trigger_VALUE_NAMES, 2}},
   {"Inventory_Slot", {Inventory_Slot_VALUE_NAMES, 5}},
@@ -1043,6 +1044,16 @@ constexpr field_info_t Path_Follow_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM,
    .list = NOT_A_LIST},
+  {.name = "started_tick",
+   .type = FIELD_TYPE_U32,
+   .offset = (uint32_t)offsetof(Path_Follow, started_tick),
+   .size_in_bytes = (uint32_t)sizeof(Path_Follow::started_tick),
+   .flags = 1u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
 };
 
 constexpr field_info_t Rides_FIELDS[] = {
@@ -1638,6 +1649,16 @@ constexpr field_info_t Weapon_Entity_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = &ENUM_INFOS[6],
    .list = NOT_A_LIST},
+  {.name = "spin_degrees_per_second",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Weapon_Entity, spin_degrees_per_second),
+   .size_in_bytes = (uint32_t)sizeof(Weapon_Entity::spin_degrees_per_second),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
   {.name = "volume",
    .type = FIELD_TYPE_COMPONENT,
    .offset = (uint32_t)offsetof(Weapon_Entity, volume),
@@ -2122,11 +2143,11 @@ constexpr field_info_t Extending_Platform_Entity_FIELDS[] = {
    .list = NOT_A_LIST},
 };
 
-constexpr field_info_t Guided_Rocket_Entity_FIELDS[] = {
+constexpr field_info_t Piloted_Rocket_Entity_FIELDS[] = {
   {.name = "entity_id",
    .type = FIELD_TYPE_ENTITY_UID,
-   .offset = (uint32_t)offsetof(Guided_Rocket_Entity, entity_id),
-   .size_in_bytes = (uint32_t)sizeof(Guided_Rocket_Entity::entity_id),
+   .offset = (uint32_t)offsetof(Piloted_Rocket_Entity, entity_id),
+   .size_in_bytes = (uint32_t)sizeof(Piloted_Rocket_Entity::entity_id),
    .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -2135,8 +2156,8 @@ constexpr field_info_t Guided_Rocket_Entity_FIELDS[] = {
    .list = NOT_A_LIST},
   {.name = "position",
    .type = FIELD_TYPE_V3,
-   .offset = (uint32_t)offsetof(Guided_Rocket_Entity, position),
-   .size_in_bytes = (uint32_t)sizeof(Guided_Rocket_Entity::position),
+   .offset = (uint32_t)offsetof(Piloted_Rocket_Entity, position),
+   .size_in_bytes = (uint32_t)sizeof(Piloted_Rocket_Entity::position),
    .flags = 3u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -2145,8 +2166,8 @@ constexpr field_info_t Guided_Rocket_Entity_FIELDS[] = {
    .list = NOT_A_LIST},
   {.name = "orientation",
    .type = FIELD_TYPE_QUAT,
-   .offset = (uint32_t)offsetof(Guided_Rocket_Entity, orientation),
-   .size_in_bytes = (uint32_t)sizeof(Guided_Rocket_Entity::orientation),
+   .offset = (uint32_t)offsetof(Piloted_Rocket_Entity, orientation),
+   .size_in_bytes = (uint32_t)sizeof(Piloted_Rocket_Entity::orientation),
    .flags = 3u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -2155,8 +2176,8 @@ constexpr field_info_t Guided_Rocket_Entity_FIELDS[] = {
    .list = NOT_A_LIST},
   {.name = "name",
    .type = FIELD_TYPE_STRING,
-   .offset = (uint32_t)offsetof(Guided_Rocket_Entity, name),
-   .size_in_bytes = (uint32_t)sizeof(Guided_Rocket_Entity::name),
+   .offset = (uint32_t)offsetof(Piloted_Rocket_Entity, name),
+   .size_in_bytes = (uint32_t)sizeof(Piloted_Rocket_Entity::name),
    .flags = 2u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = 32,
@@ -2165,8 +2186,8 @@ constexpr field_info_t Guided_Rocket_Entity_FIELDS[] = {
    .list = NOT_A_LIST},
   {.name = "pilot_uid",
    .type = FIELD_TYPE_ENTITY_UID,
-   .offset = (uint32_t)offsetof(Guided_Rocket_Entity, pilot_uid),
-   .size_in_bytes = (uint32_t)sizeof(Guided_Rocket_Entity::pilot_uid),
+   .offset = (uint32_t)offsetof(Piloted_Rocket_Entity, pilot_uid),
+   .size_in_bytes = (uint32_t)sizeof(Piloted_Rocket_Entity::pilot_uid),
    .flags = 1u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -2175,8 +2196,8 @@ constexpr field_info_t Guided_Rocket_Entity_FIELDS[] = {
    .list = NOT_A_LIST},
   {.name = "weapon_id",
    .type = FIELD_TYPE_ENUM,
-   .offset = (uint32_t)offsetof(Guided_Rocket_Entity, weapon_id),
-   .size_in_bytes = (uint32_t)sizeof(Guided_Rocket_Entity::weapon_id),
+   .offset = (uint32_t)offsetof(Piloted_Rocket_Entity, weapon_id),
+   .size_in_bytes = (uint32_t)sizeof(Piloted_Rocket_Entity::weapon_id),
    .flags = 0u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -2185,8 +2206,8 @@ constexpr field_info_t Guided_Rocket_Entity_FIELDS[] = {
    .list = NOT_A_LIST},
   {.name = "render",
    .type = FIELD_TYPE_COMPONENT,
-   .offset = (uint32_t)offsetof(Guided_Rocket_Entity, render),
-   .size_in_bytes = (uint32_t)sizeof(Guided_Rocket_Entity::render),
+   .offset = (uint32_t)offsetof(Piloted_Rocket_Entity, render),
+   .size_in_bytes = (uint32_t)sizeof(Piloted_Rocket_Entity::render),
    .flags = 0u,
    .component_id = 8,
    .string_capacity = NOT_A_STRING,
@@ -3615,10 +3636,10 @@ constexpr field_info_t Geometry_Owner_Entity_FIELDS[] = {
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = &ENUM_INFOS[19],
    .list = NOT_A_LIST},
-  {.name = "solid_only_when_lensed",
+  {.name = "solid_only_when_viewed_through_a_lens",
    .type = FIELD_TYPE_BOOL,
-   .offset = (uint32_t)offsetof(Geometry_Owner_Entity, solid_only_when_lensed),
-   .size_in_bytes = (uint32_t)sizeof(Geometry_Owner_Entity::solid_only_when_lensed),
+   .offset = (uint32_t)offsetof(Geometry_Owner_Entity, solid_only_when_viewed_through_a_lens),
+   .size_in_bytes = (uint32_t)sizeof(Geometry_Owner_Entity::solid_only_when_viewed_through_a_lens),
    .flags = 3u,
    .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
@@ -3923,6 +3944,26 @@ constexpr field_info_t Mover_Entity_FIELDS[] = {
    .size_in_bytes = (uint32_t)sizeof(Mover_Entity::follow),
    .flags = 0u,
    .component_id = 14,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
+  {.name = "spin_axis",
+   .type = FIELD_TYPE_V3,
+   .offset = (uint32_t)offsetof(Mover_Entity, spin_axis),
+   .size_in_bytes = (uint32_t)sizeof(Mover_Entity::spin_axis),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
+   .string_capacity = NOT_A_STRING,
+   .asset_class_id = NOT_AN_ASSET_CLASS,
+   .enum_info = NOT_AN_ENUM,
+   .list = NOT_A_LIST},
+  {.name = "spin_degrees_per_second",
+   .type = FIELD_TYPE_F32,
+   .offset = (uint32_t)offsetof(Mover_Entity, spin_degrees_per_second),
+   .size_in_bytes = (uint32_t)sizeof(Mover_Entity::spin_degrees_per_second),
+   .flags = 2u,
+   .component_id = NOT_A_COMPONENT,
    .string_capacity = NOT_A_STRING,
    .asset_class_id = NOT_AN_ASSET_CLASS,
    .enum_info = NOT_AN_ENUM,
@@ -5458,7 +5499,7 @@ constexpr component_type_info_t COMPONENT_INFOS[] = {
   {"Inventory", {Inventory_FIELDS, 7}, (uint32_t)sizeof(Inventory)},
   {"Timer_State", {Timer_State_FIELDS, 5}, (uint32_t)sizeof(Timer_State)},
   {"Match", {Match_FIELDS, 10}, (uint32_t)sizeof(Match)},
-  {"Path_Follow", {Path_Follow_FIELDS, 4}, (uint32_t)sizeof(Path_Follow)},
+  {"Path_Follow", {Path_Follow_FIELDS, 5}, (uint32_t)sizeof(Path_Follow)},
   {"Rides", {Rides_FIELDS, 1}, (uint32_t)sizeof(Rides)},
 };
 
@@ -5470,7 +5511,7 @@ Entity* construct_Shot_Entity(void* memory) { return new (memory) Shot_Entity();
 Entity* construct_Platform_Entity(void* memory) { return new (memory) Platform_Entity(); }
 Entity* construct_Shrinking_Platform_Entity(void* memory) { return new (memory) Shrinking_Platform_Entity(); }
 Entity* construct_Extending_Platform_Entity(void* memory) { return new (memory) Extending_Platform_Entity(); }
-Entity* construct_Guided_Rocket_Entity(void* memory) { return new (memory) Guided_Rocket_Entity(); }
+Entity* construct_Piloted_Rocket_Entity(void* memory) { return new (memory) Piloted_Rocket_Entity(); }
 Entity* construct_Canopy_Entity(void* memory) { return new (memory) Canopy_Entity(); }
 Entity* construct_Bubble_Entity(void* memory) { return new (memory) Bubble_Entity(); }
 Entity* construct_Damageable_Entity(void* memory) { return new (memory) Damageable_Entity(); }
@@ -5512,7 +5553,7 @@ Entity* as_base_Shot_Entity(void* memory) { return static_cast<Entity*>((Shot_En
 Entity* as_base_Platform_Entity(void* memory) { return static_cast<Entity*>((Platform_Entity*)memory); }
 Entity* as_base_Shrinking_Platform_Entity(void* memory) { return static_cast<Entity*>((Shrinking_Platform_Entity*)memory); }
 Entity* as_base_Extending_Platform_Entity(void* memory) { return static_cast<Entity*>((Extending_Platform_Entity*)memory); }
-Entity* as_base_Guided_Rocket_Entity(void* memory) { return static_cast<Entity*>((Guided_Rocket_Entity*)memory); }
+Entity* as_base_Piloted_Rocket_Entity(void* memory) { return static_cast<Entity*>((Piloted_Rocket_Entity*)memory); }
 Entity* as_base_Canopy_Entity(void* memory) { return static_cast<Entity*>((Canopy_Entity*)memory); }
 Entity* as_base_Bubble_Entity(void* memory) { return static_cast<Entity*>((Bubble_Entity*)memory); }
 Entity* as_base_Damageable_Entity(void* memory) { return static_cast<Entity*>((Damageable_Entity*)memory); }
@@ -5551,12 +5592,12 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"player_spawn_entity", "Player Spawn", {Player_Spawn_Entity_FIELDS, 6}, (uint32_t)sizeof(Player_Spawn_Entity), (uint32_t)alignof(Player_Spawn_Entity), 0u, false, false, false, construct_Player_Spawn_Entity, as_base_Player_Spawn_Entity},
   {"player_spectate_entity", "Player Spectate", {Player_Spectate_Entity_FIELDS, 4}, (uint32_t)sizeof(Player_Spectate_Entity), (uint32_t)alignof(Player_Spectate_Entity), 0u, false, false, false, construct_Player_Spectate_Entity, as_base_Player_Spectate_Entity},
   {"player_entity", "Player", {Player_Entity_FIELDS, 34}, (uint32_t)sizeof(Player_Entity), (uint32_t)alignof(Player_Entity), 3392u, true, true, true, construct_Player_Entity, as_base_Player_Entity},
-  {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 16}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 289u, false, true, false, construct_Weapon_Entity, as_base_Weapon_Entity},
+  {"weapon_entity", "Weapon", {Weapon_Entity_FIELDS, 17}, (uint32_t)sizeof(Weapon_Entity), (uint32_t)alignof(Weapon_Entity), 289u, false, true, false, construct_Weapon_Entity, as_base_Weapon_Entity},
   {"shot_entity", "Shot", {Shot_Entity_FIELDS, 7}, (uint32_t)sizeof(Shot_Entity), (uint32_t)alignof(Shot_Entity), 264u, true, true, false, construct_Shot_Entity, as_base_Shot_Entity},
   {"platform_entity", "Platform", {Platform_Entity_FIELDS, 11}, (uint32_t)sizeof(Platform_Entity), (uint32_t)alignof(Platform_Entity), 280u, true, true, true, construct_Platform_Entity, as_base_Platform_Entity},
   {"shrinking_platform_entity", "Shrinking Platform", {Shrinking_Platform_Entity_FIELDS, 12}, (uint32_t)sizeof(Shrinking_Platform_Entity), (uint32_t)alignof(Shrinking_Platform_Entity), 280u, true, true, true, construct_Shrinking_Platform_Entity, as_base_Shrinking_Platform_Entity},
   {"extending_platform_entity", "Extending Platform", {Extending_Platform_Entity_FIELDS, 14}, (uint32_t)sizeof(Extending_Platform_Entity), (uint32_t)alignof(Extending_Platform_Entity), 264u, true, true, true, construct_Extending_Platform_Entity, as_base_Extending_Platform_Entity},
-  {"guided_rocket_entity", "Guided Rocket", {Guided_Rocket_Entity_FIELDS, 7}, (uint32_t)sizeof(Guided_Rocket_Entity), (uint32_t)alignof(Guided_Rocket_Entity), 256u, true, true, false, construct_Guided_Rocket_Entity, as_base_Guided_Rocket_Entity},
+  {"piloted_rocket_entity", "Piloted Rocket", {Piloted_Rocket_Entity_FIELDS, 7}, (uint32_t)sizeof(Piloted_Rocket_Entity), (uint32_t)alignof(Piloted_Rocket_Entity), 256u, true, true, false, construct_Piloted_Rocket_Entity, as_base_Piloted_Rocket_Entity},
   {"canopy_entity", "Canopy", {Canopy_Entity_FIELDS, 8}, (uint32_t)sizeof(Canopy_Entity), (uint32_t)alignof(Canopy_Entity), 256u, true, true, true, construct_Canopy_Entity, as_base_Canopy_Entity},
   {"bubble_entity", "Bubble", {Bubble_Entity_FIELDS, 19}, (uint32_t)sizeof(Bubble_Entity), (uint32_t)alignof(Bubble_Entity), 280u, true, true, true, construct_Bubble_Entity, as_base_Bubble_Entity},
   {"damageable_entity", "Damageable", {Damageable_Entity_FIELDS, 8}, (uint32_t)sizeof(Damageable_Entity), (uint32_t)alignof(Damageable_Entity), 321u, false, true, false, construct_Damageable_Entity, as_base_Damageable_Entity},
@@ -5574,7 +5615,7 @@ constexpr entity_type_info_t ENTITY_INFOS[] = {
   {"ping_marker_entity", "Ping Marker", {Ping_Marker_Entity_FIELDS, 8}, (uint32_t)sizeof(Ping_Marker_Entity), (uint32_t)alignof(Ping_Marker_Entity), 256u, true, true, false, construct_Ping_Marker_Entity, as_base_Ping_Marker_Entity},
   {"logic_timer_entity", "Logic Timer", {Logic_Timer_Entity_FIELDS, 5}, (uint32_t)sizeof(Logic_Timer_Entity), (uint32_t)alignof(Logic_Timer_Entity), 4096u, false, true, false, construct_Logic_Timer_Entity, as_base_Logic_Timer_Entity},
   {"path_node_entity", "Path Node", {Path_Node_Entity_FIELDS, 8}, (uint32_t)sizeof(Path_Node_Entity), (uint32_t)alignof(Path_Node_Entity), 0u, false, false, false, construct_Path_Node_Entity, as_base_Path_Node_Entity},
-  {"mover_entity", "Mover", {Mover_Entity_FIELDS, 6}, (uint32_t)sizeof(Mover_Entity), (uint32_t)alignof(Mover_Entity), 16386u, false, true, true, construct_Mover_Entity, as_base_Mover_Entity},
+  {"mover_entity", "Mover", {Mover_Entity_FIELDS, 8}, (uint32_t)sizeof(Mover_Entity), (uint32_t)alignof(Mover_Entity), 16386u, false, true, true, construct_Mover_Entity, as_base_Mover_Entity},
   {"launcher_entity", "Launcher", {Launcher_Entity_FIELDS, 16}, (uint32_t)sizeof(Launcher_Entity), (uint32_t)alignof(Launcher_Entity), 258u, false, true, false, construct_Launcher_Entity, as_base_Launcher_Entity},
   {"movement_modifier_entity", "Movement Modifier", {Movement_Modifier_Entity_FIELDS, 11}, (uint32_t)sizeof(Movement_Modifier_Entity), (uint32_t)alignof(Movement_Modifier_Entity), 3u, false, true, true, construct_Movement_Modifier_Entity, as_base_Movement_Modifier_Entity},
   {"remnant_entity", "Remnant", {Remnant_Entity_FIELDS, 7}, (uint32_t)sizeof(Remnant_Entity), (uint32_t)alignof(Remnant_Entity), 256u, true, true, false, construct_Remnant_Entity, as_base_Remnant_Entity},
@@ -5601,7 +5642,7 @@ constexpr int32_t COMPONENT_OFFSETS[][16] = {
   {-1, -1, -1, (int32_t)offsetof(Platform_Entity, projectile), (int32_t)offsetof(Platform_Entity, flight), -1, -1, -1, (int32_t)offsetof(Platform_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Platform_Entity
   {-1, -1, -1, (int32_t)offsetof(Shrinking_Platform_Entity, projectile), (int32_t)offsetof(Shrinking_Platform_Entity, flight), -1, -1, -1, (int32_t)offsetof(Shrinking_Platform_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Shrinking_Platform_Entity
   {-1, -1, -1, (int32_t)offsetof(Extending_Platform_Entity, projectile), -1, -1, -1, -1, (int32_t)offsetof(Extending_Platform_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Extending_Platform_Entity
-  {-1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Guided_Rocket_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Guided_Rocket_Entity
+  {-1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Piloted_Rocket_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Piloted_Rocket_Entity
   {-1, -1, -1, -1, -1, -1, -1, -1, (int32_t)offsetof(Canopy_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Canopy_Entity
   {-1, -1, -1, (int32_t)offsetof(Bubble_Entity, projectile), (int32_t)offsetof(Bubble_Entity, flight), -1, -1, -1, (int32_t)offsetof(Bubble_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Bubble_Entity
   {(int32_t)offsetof(Damageable_Entity, volume), -1, -1, -1, -1, -1, (int32_t)offsetof(Damageable_Entity, health), -1, (int32_t)offsetof(Damageable_Entity, render), -1, -1, -1, -1, -1, -1, -1}, // Damageable_Entity
@@ -5676,7 +5717,7 @@ constexpr entity_type REPLICATED_ENTITY_TYPES[] = {
   entity_type::Platform_Entity,
   entity_type::Shrinking_Platform_Entity,
   entity_type::Extending_Platform_Entity,
-  entity_type::Guided_Rocket_Entity,
+  entity_type::Piloted_Rocket_Entity,
   entity_type::Canopy_Entity,
   entity_type::Bubble_Entity,
   entity_type::Damageable_Entity,
@@ -5769,12 +5810,13 @@ const char* to_string(Weapon value)
     case Weapon::Statue: return "Statue";
     case Weapon::Modifier_Gun: return "Modifier_Gun";
     case Weapon::Extending_Platform: return "Extending_Platform";
-    case Weapon::Guided_Rocket: return "Guided_Rocket";
+    case Weapon::Piloted_Rocket: return "Piloted_Rocket";
     case Weapon::Flashlight: return "Flashlight";
     case Weapon::Eraser: return "Eraser";
     case Weapon::Merge: return "Merge";
     case Weapon::Red_Lens: return "Red_Lens";
     case Weapon::Camera_Swapper: return "Camera_Swapper";
+    case Weapon::Laser_Rocket: return "Laser_Rocket";
   }
   assert(false && "invalid Weapon");
   return "";
@@ -5800,12 +5842,13 @@ template <> std::optional<Weapon> try_from_string<Weapon>(std::string_view text)
   if (text == "Statue") return Weapon::Statue;
   if (text == "Modifier_Gun") return Weapon::Modifier_Gun;
   if (text == "Extending_Platform") return Weapon::Extending_Platform;
-  if (text == "Guided_Rocket") return Weapon::Guided_Rocket;
+  if (text == "Piloted_Rocket") return Weapon::Piloted_Rocket;
   if (text == "Flashlight") return Weapon::Flashlight;
   if (text == "Eraser") return Weapon::Eraser;
   if (text == "Merge") return Weapon::Merge;
   if (text == "Red_Lens") return Weapon::Red_Lens;
   if (text == "Camera_Swapper") return Weapon::Camera_Swapper;
+  if (text == "Laser_Rocket") return Weapon::Laser_Rocket;
   return std::nullopt;
 }
 
@@ -6288,7 +6331,7 @@ Entity* create_entity(entity_type type)
     case entity_type::Platform_Entity: return new Platform_Entity();
     case entity_type::Shrinking_Platform_Entity: return new Shrinking_Platform_Entity();
     case entity_type::Extending_Platform_Entity: return new Extending_Platform_Entity();
-    case entity_type::Guided_Rocket_Entity: return new Guided_Rocket_Entity();
+    case entity_type::Piloted_Rocket_Entity: return new Piloted_Rocket_Entity();
     case entity_type::Canopy_Entity: return new Canopy_Entity();
     case entity_type::Bubble_Entity: return new Bubble_Entity();
     case entity_type::Damageable_Entity: return new Damageable_Entity();
@@ -6350,7 +6393,7 @@ void destroy_entity(Entity* entity)
     case entity_type::Platform_Entity: delete static_cast<Platform_Entity*>(entity); return;
     case entity_type::Shrinking_Platform_Entity: delete static_cast<Shrinking_Platform_Entity*>(entity); return;
     case entity_type::Extending_Platform_Entity: delete static_cast<Extending_Platform_Entity*>(entity); return;
-    case entity_type::Guided_Rocket_Entity: delete static_cast<Guided_Rocket_Entity*>(entity); return;
+    case entity_type::Piloted_Rocket_Entity: delete static_cast<Piloted_Rocket_Entity*>(entity); return;
     case entity_type::Canopy_Entity: delete static_cast<Canopy_Entity*>(entity); return;
     case entity_type::Bubble_Entity: delete static_cast<Bubble_Entity*>(entity); return;
     case entity_type::Damageable_Entity: delete static_cast<Damageable_Entity*>(entity); return;
@@ -6397,6 +6440,6 @@ Span<const entity_type> replicated_entity_types()
   return {REPLICATED_ENTITY_TYPES, REPLICATED_ENTITY_TYPE_COUNT};
 }
 
-const uint32_t SCHEMA_HASH = 0xc323241du;
+const uint32_t SCHEMA_HASH = 0xba358703u;
 
 } // namespace entities

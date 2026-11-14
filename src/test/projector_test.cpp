@@ -73,7 +73,7 @@ int main()
 
   const vec3f at_range = project(matrix, light.position + light.forward * light.range);
   check(near(at_range.x, 0.f) && near(at_range.y, 0.f), "the axis projects to the map centre");
-  check(near(at_range.z, 1.f, 1e-4f), "the range projects to depth 1");
+  check(near(at_range.z, 0.f, 1e-4f), "the range projects to depth 0");
 
   // The four corners at the range: uv {0,1}^2, which is ndc +-1, and depth 1.
   const Array<vec3f, 4> corners = shared::compute_projector_frame_corners(light, light.range);
@@ -84,7 +84,7 @@ int main()
     const vec3f ndc = project(matrix, corners[corner]);
     check(near(ndc.x, expected_x[corner], 2e-3f), "a frame corner lands on the map's x edge");
     check(near(std::abs(ndc.y), 1.f, 2e-3f), "a frame corner lands on the map's y edge");
-    check(near(ndc.z, 1.f, 1e-4f), "a frame corner at the range lands on depth 1");
+    check(near(ndc.z, 0.f, 1e-4f), "a frame corner at the range lands on depth 0");
     check(inside_every_plane(shared::compute_projector_frame_planes(light), corners[corner]),
           "a frame corner is inside every frame plane");
   }

@@ -1,8 +1,8 @@
 #include "entities/generated/entities/extending_platform_entity_generated.hpp"
-#include "entities/generated/entities/guided_rocket_entity_generated.hpp"
+#include "entities/generated/entities/piloted_rocket_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities_tables_generated.hpp"
-#include "guided_rocket_system.hpp"
+#include "piloted_rocket_system.hpp"
 
 #include "../../shared/collision/flight_path.hpp"
 #include "../../shared/linalg.hpp"
@@ -38,7 +38,7 @@ vec3f compute_pilot_heading(const entities::Player_Entity& pilot)
   return linalg::direction_from_angles(pilot.view_angle_yaw, pilot.view_angle_pitch);
 }
 
-void write_rocket_pose(entities::Guided_Rocket_Entity& rocket, const entities::Player_Entity& pilot)
+void write_rocket_pose(entities::Piloted_Rocket_Entity& rocket, const entities::Player_Entity& pilot)
 {
   rocket.position    = pilot.movement.override_target_position;
   rocket.orientation = linalg::from_view_angles(pilot.view_angle_yaw, pilot.view_angle_pitch);
@@ -105,7 +105,7 @@ void solidify_flight_path(server_context_t& context, const ended_flight_t& fligh
 
 } // namespace
 
-void update_guided_rockets(server_context_t& context, uint32_t tickrate_hz)
+void update_piloted_rockets(server_context_t& context, uint32_t tickrate_hz)
 {
   shared::Entity_System& system = context.world.session.entity_system;
   std::unordered_map<shared::entity_uid_t, shared::flight_path_t>& paths =
@@ -121,7 +121,7 @@ void update_guided_rockets(server_context_t& context, uint32_t tickrate_hz)
   std::vector<shared::entity_uid_t> spent;
   std::vector<ended_flight_t>       ended;
 
-  for (entities::Guided_Rocket_Entity& rocket : system.entities_of_type<entities::Guided_Rocket_Entity>())
+  for (entities::Piloted_Rocket_Entity& rocket : system.entities_of_type<entities::Piloted_Rocket_Entity>())
   {
     const entities::Player_Entity* pilot = system.get<entities::Player_Entity>(rocket.pilot_uid);
     const bool pilot_is_alive = pilot != nullptr && pilot->health.current_health > 0;
@@ -169,12 +169,12 @@ void update_guided_rockets(server_context_t& context, uint32_t tickrate_hz)
 
   for (const shared::entity_uid_t pilot_uid : launched)
   {
-    const shared::entity_uid_t uid = system.spawn(entities::entity_type::Guided_Rocket_Entity);
-    entities::Guided_Rocket_Entity* rocket = system.get<entities::Guided_Rocket_Entity>(uid);
-    const entities::Player_Entity*  pilot  = system.get<entities::Player_Entity>(pilot_uid);
+    const shared::entity_uid_t uid = system.spawn(entities::entity_type::Piloted_Rocket_Entity);
+    entities::Piloted_Rocket_Entity* rocket = system.get<entities::Piloted_Rocket_Entity>(uid);
+    const entities::Player_Entity*   pilot  = system.get<entities::Player_Entity>(pilot_uid);
     if (rocket == nullptr || pilot == nullptr)
     {
-      log_error("update_guided_rockets: no room to spawn a guided rocket for player {}", pilot_uid);
+      log_error("update_piloted_rockets: no room to spawn a piloted rocket for player {}", pilot_uid);
       continue;
     }
 
@@ -199,7 +199,7 @@ void update_guided_rockets(server_context_t& context, uint32_t tickrate_hz)
     destroy_entity(context, uid);
 
   std::erase_if(paths, [&system](const auto& entry) {
-    return system.get<entities::Guided_Rocket_Entity>(entry.first) == nullptr;
+    return system.get<entities::Piloted_Rocket_Entity>(entry.first) == nullptr;
   });
 }
 

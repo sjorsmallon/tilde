@@ -81,6 +81,8 @@ struct contact_explode_t
 {
   float radius;
   float knockback;
+  // Dealt whole to every damageable inside the radius; 0 only pushes.
+  float damage;
 };
 
 // The player hit rides inside the shooter for `seconds`: the shooter walks, the one hit aims (shared/merge.hpp).

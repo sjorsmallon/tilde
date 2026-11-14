@@ -4109,7 +4109,7 @@ entity
   "erased_in_shadow" "false"
   "revealed_by_lens" "false"
   "lens_filter" "Red"
-  "solid_only_when_lensed" "false"
+  "solid_only_when_viewed_through_a_lens" "false"
   "casts_dynamic_shadow" "false"
 }
 entity
@@ -4161,7 +4161,7 @@ entity
   "erased_in_shadow" "false"
   "revealed_by_lens" "false"
   "lens_filter" "Red"
-  "solid_only_when_lensed" "false"
+  "solid_only_when_viewed_through_a_lens" "false"
   "casts_dynamic_shadow" "false"
 }
 entity

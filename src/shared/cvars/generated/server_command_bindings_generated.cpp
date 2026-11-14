@@ -135,6 +135,22 @@ bool invoke_setpos(Span<std::string_view> args, const command_context_t& context
   return true;
 }
 
+// give_weapon <weapon>
+bool invoke_give_weapon(Span<std::string_view> args, const command_context_t& context,
+     std::string* out_reply)
+{
+  if (args.size() != 1u)
+  {
+    usage_error(out_reply, command_id::give_weapon, args.size());
+    return false;
+  }
+
+  std::string_view weapon = args[0];
+
+  commands::give_weapon(weapon, context);
+  return true;
+}
+
 // join_game
 bool invoke_join_game(Span<std::string_view> args, const command_context_t& context,
      std::string* out_reply)
@@ -448,6 +464,7 @@ void bind_server_commands(command_table_t& table)
   table.binders[(uint32_t)command_id::spawn_bot] = &invoke_spawn_bot;
   table.binders[(uint32_t)command_id::map] = &invoke_map;
   table.binders[(uint32_t)command_id::setpos] = &invoke_setpos;
+  table.binders[(uint32_t)command_id::give_weapon] = &invoke_give_weapon;
   table.binders[(uint32_t)command_id::join_game] = &invoke_join_game;
   table.binders[(uint32_t)command_id::join_game_at] = &invoke_join_game_at;
   table.binders[(uint32_t)command_id::spectate] = &invoke_spectate;

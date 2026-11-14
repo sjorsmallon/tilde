@@ -357,8 +357,8 @@ struct cvar_state_t
   int32_t r_rim_width;
   float r_misprint;
   float r_misprint_distance;
-  float r_cut_wipe_seconds;
-  float r_cut_wipe_distance;
+  float r_teleport_visual_transition_wipe_seconds;
+  float r_teleport_visual_transition_wipe_distance;
   float r_flashlight_intensity;
   float r_flashlight_red;
   float r_flashlight_green;
@@ -621,8 +621,8 @@ enum class cvar_id : uint16_t
   r_rim_width = 203,
   r_misprint = 204,
   r_misprint_distance = 205,
-  r_cut_wipe_seconds = 206,
-  r_cut_wipe_distance = 207,
+  r_teleport_visual_transition_wipe_seconds = 206,
+  r_teleport_visual_transition_wipe_distance = 207,
   r_flashlight_intensity = 208,
   r_flashlight_red = 209,
   r_flashlight_green = 210,
@@ -678,46 +678,47 @@ enum class command_id : uint16_t
   spawn_bot = 0,
   map = 1,
   setpos = 2,
-  join_game = 3,
-  join_game_at = 4,
-  spectate = 5,
-  sv_mem_report = 6,
-  sv_frame_report = 7,
-  sv_shadow_volume_report = 8,
-  sv_hitch_report = 9,
-  sv_zone_report = 10,
-  ent_fire = 11,
-  restart_round = 12,
-  end_match = 13,
-  ready = 14,
-  sv_replay_record = 15,
-  sv_replay_stop = 16,
-  shadow_volume_report = 17,
-  bind = 18,
-  grab_frame = 19,
-  grab_clear = 20,
-  connect = 21,
-  announce = 22,
-  noclip = 23,
-  mem_report = 24,
-  mem_frame = 25,
-  mem_stacks = 26,
-  frame_report = 27,
-  frame_reset = 28,
-  gpu_report = 29,
-  gpu_reset = 30,
-  hitch_report = 31,
-  zone_report = 32,
-  replay_record = 33,
-  replay_play = 34,
-  replay_stop = 35,
-  replay_pause = 36,
-  replay_speed = 37,
-  replay_seek = 38,
-  replay_skip = 39,
+  give_weapon = 3,
+  join_game = 4,
+  join_game_at = 5,
+  spectate = 6,
+  sv_mem_report = 7,
+  sv_frame_report = 8,
+  sv_shadow_volume_report = 9,
+  sv_hitch_report = 10,
+  sv_zone_report = 11,
+  ent_fire = 12,
+  restart_round = 13,
+  end_match = 14,
+  ready = 15,
+  sv_replay_record = 16,
+  sv_replay_stop = 17,
+  shadow_volume_report = 18,
+  bind = 19,
+  grab_frame = 20,
+  grab_clear = 21,
+  connect = 22,
+  announce = 23,
+  noclip = 24,
+  mem_report = 25,
+  mem_frame = 26,
+  mem_stacks = 27,
+  frame_report = 28,
+  frame_reset = 29,
+  gpu_report = 30,
+  gpu_reset = 31,
+  hitch_report = 32,
+  zone_report = 33,
+  replay_record = 34,
+  replay_play = 35,
+  replay_stop = 36,
+  replay_pause = 37,
+  replay_speed = 38,
+  replay_seek = 39,
+  replay_skip = 40,
 };
 
-constexpr uint32_t COMMAND_COUNT = 40;
+constexpr uint32_t COMMAND_COUNT = 41;
 
 enum cvar_type : uint8_t
 {
@@ -809,6 +810,9 @@ void map(std::string_view path, const command_context_t& context);
 // @Server  Move the calling player's body to a position
 // usage: setpos <x> <y> <z>
 void setpos(float x, float y, float z, const command_context_t& context);
+// @Server  Put a weapon with its default counts in the calling player's slot for it
+// usage: give_weapon <weapon>
+void give_weapon(std::string_view weapon, const command_context_t& context);
 // @Server  Leave spectate and spawn into the match
 // usage: join_game
 void join_game(const command_context_t& context);

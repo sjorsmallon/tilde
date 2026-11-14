@@ -102,7 +102,7 @@ file only states them.
 | The input step: weapon clocks on both ends, the shared per-step loop | `input_step_plan.md` |
 | Hitscan, lag compensation | `hitscan_plan.md`, `lag_compensation_def.md` |
 | Weapons, inventory, contact effects | `weapon_inventory_plan.md`, `contact_effect_plan.md` |
-| Guided rocket, the path it leaves | `guided_rocket_plan.md` |
+| Piloted rocket, the path it leaves | `piloted_rocket_plan.md` |
 | Game modes, the match | `game_modes_def.md`, `match_def.md`, `timer_def.md` |
 | Reliable stream, transfers | `reliable_stream_def.md` |
 | Replays and ghosts | `replay_def.md`, `coop_ghost_plan.md` |
@@ -323,7 +323,7 @@ prediction writes `ctx.prediction`.
   alive, and `Recall` on the other button takes them back. The ground only
   ever raises `ammo`, so -1 stays unlimited.
 - A `Pilot` flight is a `Movement_Override`, flown inside `player_move`: the
-  rocket is `Movement::override_target_position`, and `Guided_Rocket_Entity`
+  rocket is `Movement::override_target_position`, and `Piloted_Rocket_Entity`
   is a follower that flies nothing. The client's camera rides the prediction.
 - What a shot does on ARRIVAL is the button's `contact_t` (`shared/contact.hpp`);
   hitscan and every sweeping projectile push one `pending_contact_t` and

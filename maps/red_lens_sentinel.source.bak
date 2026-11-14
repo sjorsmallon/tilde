@@ -55,7 +55,7 @@ connections
   }
   connection
   {
-    "sender" "221"
+    "sender" "225"
     "signal" "Touched"
     "target_kind" "Activator"
     "action" "Begin_Dolly"
@@ -66,21 +66,21 @@ connections
   }
   connection
   {
-    "sender" "221"
+    "sender" "225"
     "signal" "Left"
     "target_kind" "Activator"
     "action" "End_Dolly"
   }
   connection
   {
-    "sender" "222"
+    "sender" "224"
     "signal" "Touched"
     "target_kind" "Activator"
     "action" "Begin_Trail"
   }
   connection
   {
-    "sender" "222"
+    "sender" "224"
     "signal" "Left"
     "target_kind" "Activator"
     "action" "End_Trail"
@@ -8139,9 +8139,9 @@ mesh
 mesh
 {
   "_uid" "201"
-  "position" "2752 -338.315369 -1627.3197"
+  "position" "2752 -490.583191 -1546.27502"
   "rotation" "0 0 0 1"
-  "vertices" "-64 -685.68457 -956.299927, 64 -685.68457 -956.299927, -64 685.68457 -956.299927, 64 685.68457 -956.299927, -64 -685.68457 956.299927, 64 -685.68457 956.299927, -64 685.68457 956.299927, 64 685.68457 956.299927"
+  "vertices" "-64 -533.416931 -875.255066, 64 -533.416931 -875.255066, -64 533.416931 -875.255066, 64 533.416931 -875.255066, -64 -533.416931 875.255066, 64 -533.416931 875.255066, -64 533.416931 875.255066, 64 533.416931 875.255066"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
   "visible" "1"
@@ -8510,7 +8510,7 @@ entity
   "erased_in_shadow" "false"
   "revealed_by_lens" "true"
   "lens_filter" "Red"
-  "solid_only_when_lensed" "false"
+  "solid_only_when_viewed_through_a_lens" "false"
   "casts_dynamic_shadow" "false"
   "casts_solid_from_lens" "false"
 }
@@ -8533,10 +8533,11 @@ entity
   "name" ""
   "ammo" "-1"
   "reserve_ammo" "-1"
-  "weapon_id" "Guided_Rocket"
+  "weapon_id" "Piloted_Rocket"
   "magazine_size" "0"
   "max_alive" "0"
   "damage_type" "Normal"
+  "spin_degrees_per_second" "0"
   "volume.position" "0 0 0"
   "volume.half_extents" "40 40 40"
   "render.mesh" "Error"
@@ -8593,7 +8594,7 @@ entity
   "erased_in_shadow" "false"
   "revealed_by_lens" "false"
   "lens_filter" "Red"
-  "solid_only_when_lensed" "false"
+  "solid_only_when_viewed_through_a_lens" "false"
   "casts_dynamic_shadow" "true"
   "casts_solid_from_lens" "false"
 }
@@ -8638,7 +8639,7 @@ entity
   "erased_in_shadow" "false"
   "revealed_by_lens" "true"
   "lens_filter" "Blue"
-  "solid_only_when_lensed" "true"
+  "solid_only_when_viewed_through_a_lens" "true"
   "casts_dynamic_shadow" "false"
   "casts_solid_from_lens" "false"
 }
@@ -8675,6 +8676,7 @@ entity
   "magazine_size" "0"
   "max_alive" "0"
   "damage_type" "Normal"
+  "spin_degrees_per_second" "0"
   "volume.position" "0 0 0"
   "volume.half_extents" "40 40 40"
   "render.mesh" "Error"
@@ -8690,8 +8692,8 @@ entity
 {
   "classname" "projector_entity"
   "_uid" "200"
-  "position" "1101.022 -484.49054 -1501.3062"
-  "orientation" "2.085969e-05 0.0012163818 0.01714643 -0.99985224"
+  "position" "1344.4418 -477.61923 -1550.4641"
+  "orientation" "-1.8189948e-12 0 0 1"
   "name" ""
   "switch_state.value" "true"
   "light.color" "1 1 1"
@@ -8701,7 +8703,7 @@ entity
   "light.casts_shadows" "true"
   "light.cuts_geometry" "false"
   "light.solid_shadows" "Solid_From_Lens_To_Shadow"
-  "rides.mover" "224"
+  "rides.mover" "0"
   "range" "8192"
   "half_angle_degrees" "20"
   "aspect" "1.7778"
@@ -8723,12 +8725,12 @@ entity
 {
   "classname" "trigger_volume_entity"
   "_uid" "206"
-  "position" "2688 -832 -768"
+  "position" "2688 -909.2329 -861.4004"
   "orientation" "0 0 0 1"
   "name" ""
   "switch_state.value" "true"
   "volume.position" "0 0 0"
-  "volume.half_extents" "64 64 64"
+  "volume.half_extents" "64 64 98.201996"
   "touched_by" "Projected_Balls"
 }
 entity
@@ -8778,11 +8780,11 @@ entity
   "name" ""
   "projector" "200"
   "texture" "ball_gobo"
-  "text.Row_0" "jkl o, Sjors!"
-  "text.Row_1" "Hello, Sjors!"
+  "text.Row_0" "Hello, Sjors!"
+  "text.Row_1" "      Hoi, Daan!"
   "text.Row_2" "_________________"
-  "text.Row_3" ""
-  "text.Row_4" " "
+  "text.Row_3" "                 \\"
+  "text.Row_4" "                  \\"
   "text.Row_5" ""
   "text.Row_6" ""
   "text.Row_7" ""
@@ -8790,32 +8792,8 @@ entity
 }
 entity
 {
-  "classname" "weapon_entity"
-  "_uid" "219"
-  "position" "384 40 -384"
-  "orientation" "0 0 0 1"
-  "name" ""
-  "ammo" "-1"
-  "reserve_ammo" "-1"
-  "weapon_id" "Camera_Swapper"
-  "magazine_size" "0"
-  "max_alive" "0"
-  "damage_type" "Normal"
-  "volume.position" "0 0 0"
-  "volume.half_extents" "40 40 40"
-  "render.mesh" "Error"
-  "render.material" "Missing"
-  "render.color" "1 1 1"
-  "render.visible" "true"
-  "render.is_wireframe" "false"
-  "render.offset" "0 0 0"
-  "render.scale" "1 1 1"
-  "render.rotation" "0 0 0 1"
-}
-entity
-{
   "classname" "trigger_volume_entity"
-  "_uid" "221"
+  "_uid" "225"
   "position" "-128 192 -2304"
   "orientation" "0 0 0 1"
   "name" ""
@@ -8827,22 +8805,37 @@ entity
 entity
 {
   "classname" "trigger_volume_entity"
-  "_uid" "222"
-  "position" "-1840.0537 192 -2601.6104"
+  "_uid" "224"
+  "position" "-1838.3145 192 -2593.9045"
   "orientation" "0 0 0 1"
   "name" ""
   "switch_state.value" "true"
   "volume.position" "0 0 0"
-  "volume.half_extents" "463.9464 64 726.3897"
+  "volume.half_extents" "463.94635 64 726.3897"
   "touched_by" "Anything"
 }
 entity
 {
-  "classname" "mover_entity"
-  "_uid" "224"
-  "position" "2048 -496 -1792"
+  "classname" "weapon_entity"
+  "_uid" "226"
+  "position" "296 40 -344"
   "orientation" "0 0 0 1"
   "name" ""
-  "switch_state.value" "true"
-  "follow.from" "211"
+  "ammo" "-1"
+  "reserve_ammo" "-1"
+  "weapon_id" "Laser_Rocket"
+  "magazine_size" "0"
+  "max_alive" "1"
+  "damage_type" "Normal"
+  "spin_degrees_per_second" "0"
+  "volume.position" "0 0 0"
+  "volume.half_extents" "40 40 40"
+  "render.mesh" "Error"
+  "render.material" "Missing"
+  "render.color" "1 1 1"
+  "render.visible" "true"
+  "render.is_wireframe" "false"
+  "render.offset" "0 0 0"
+  "render.scale" "1 1 1"
+  "render.rotation" "0 0 0 1"
 }

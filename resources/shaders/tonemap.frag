@@ -7,7 +7,7 @@ layout(set = 0, binding = 0) uniform sampler2D hdr_target;
 layout(set = 0, binding = 1) uniform sampler2D scene_depth;
 layout(set = 0, binding = 2) uniform sampler2D scene_normal;
 layout(set = 0, binding = 3) uniform sampler3D fog_totals;
-// The tonemapped frame before the eye's last cut and its depth, read only while a cut wipe draws.
+// The tonemapped frame before the eye's last teleport and its depth, read only while a teleport visual transition wipe draws.
 layout(set = 0, binding = 4) uniform sampler2D last_frame_color;
 layout(set = 0, binding = 5) uniform sampler2D last_frame_depth;
 
@@ -44,10 +44,10 @@ layout(push_constant) uniform Tonemap
     float ink_on_black;
     float misprint_pixels;
     float misprint_distance;
-    // How far the cut wipe has peeled, 0 to 1; below 0 there is none this frame.
-    float cut_wipe_fraction;
+    // How far the teleport visual transition wipe has peeled, 0 to 1; below 0 there is none this frame.
+    float teleport_visual_transition_wipe_fraction;
     // The view depth the peel has reached half-way through.
-    float cut_wipe_distance;
+    float teleport_visual_transition_wipe_distance;
     // How far the scene colour has given way to a page of lens_view_* under the ink, 0 to 1.
     float lens_view_fraction;
     float lens_view_red;
@@ -272,21 +272,21 @@ vec4 fog_in_front()
     return mix(vec4(0.0, 0.0, 0.0, 1.0), fog, clamp(slice, 0.0, 1.0));
 }
 
-const vec3  CUT_IRIS_COLOR      = vec3(0.0);
-const float CUT_IRIS_RING_PIXELS = 2.0;
+const vec3  TELEPORT_VISUAL_TRANSITION_WIPE_RING_COLOR  = vec3(0.0);
+const float TELEPORT_VISUAL_TRANSITION_WIPE_RING_PIXELS = 2.0;
 
-// The cut as an iris: the new view opens from the screen's centre inside a growing circle, the kept frame still
-// showing outside it, a ring of CUT_IRIS_COLOR at the edge. The depth kept beside the frame is not read here.
-vec3 cut_wipe(vec3 color)
+// The teleport visual transition wipe as an iris: the new view opens from the screen's centre inside a growing circle, the kept frame still
+// showing outside it, a ring of TELEPORT_VISUAL_TRANSITION_WIPE_RING_COLOR at the edge. The depth kept beside the frame is not read here.
+vec3 teleport_visual_transition_wipe(vec3 color)
 {
     vec2  centre = vec2(textureSize(last_frame_color, 0)) * 0.5;
-    float radius = clamp(tonemap.cut_wipe_fraction, 0.0, 1.0) * length(centre);
+    float radius = clamp(tonemap.teleport_visual_transition_wipe_fraction, 0.0, 1.0) * length(centre);
 
     float inside = radius - length(gl_FragCoord.xy - centre);
     if (inside < 0.0)
         return texelFetch(last_frame_color, ivec2(gl_FragCoord.xy), 0).rgb;
-    if (inside < CUT_IRIS_RING_PIXELS)
-        return CUT_IRIS_COLOR;
+    if (inside < TELEPORT_VISUAL_TRANSITION_WIPE_RING_PIXELS)
+        return TELEPORT_VISUAL_TRANSITION_WIPE_RING_COLOR;
     return color;
 }
 
@@ -338,8 +338,8 @@ void main()
     vec3 lens = vec3(tonemap.lens_view_red, tonemap.lens_view_green, tonemap.lens_view_blue);
     color *= mix(vec3(1.0), lens, tonemap.lens_view_fraction);
 
-    if (tonemap.cut_wipe_fraction >= 0.0)
-        color = cut_wipe(color);
+    if (tonemap.teleport_visual_transition_wipe_fraction >= 0.0)
+        color = teleport_visual_transition_wipe(color);
 
     fragment_color = vec4(color, 1.0);
 }

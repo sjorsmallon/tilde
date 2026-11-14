@@ -1815,7 +1815,7 @@ static void test_a_pilot_holds_while_its_rocket_flies(const cvar_state_t& cvars)
   printf("\n[pin] pilot: the hull holds, the rocket flies the aim at one speed, and lets go once\n");
 
   const shared::weapon_definition_t& weapon =
-      shared::get_weapon_definition(entities::Weapon::Guided_Rocket);
+      shared::get_weapon_definition(entities::Weapon::Piloted_Rocket);
   const shared::pilot_t& pilot = weapon.primary_fire.pilot;
   const vec3  eye_above_feet{0.f, shared::player_eye_height, 0.f};
   Move_Input  jumping{};

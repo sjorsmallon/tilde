@@ -219,7 +219,7 @@ int main()
         entity_type::Shrinking_Platform_Entity,
         entity_type::Extending_Platform_Entity,
         // Through its pilot and Render.
-        entity_type::Guided_Rocket_Entity,
+        entity_type::Piloted_Rocket_Entity,
         // Through its carrier and its pose pair, which the client's mover cut reads.
         entity_type::Canopy_Entity,
         entity_type::Bubble_Entity,

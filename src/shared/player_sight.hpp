@@ -27,9 +27,9 @@ struct held_toggles_t
   bool held_lens_on          = false;
 };
 
-struct lens_watch_screen_t
+struct field_of_view_t
 {
-  float fov_degrees = 90.f;
+  float vertical_degrees = 90.f;
   float aspect      = 16.f / 9.f;
 };
 
@@ -42,7 +42,7 @@ struct player_sight_t
   linalg::vec3f                             feet                  = {0.f, 0.f, 0.f};
   View                            view_entering_tick    = {};
   held_toggles_t                            toggles               = {};
-  lens_watch_screen_t                       screen                = {};
+  field_of_view_t                           field_of_view         = {};
   std::optional<entities::Reveal_Cone_Kind> wielded_reveal_kind;
   uint32_t                                  wielded_lens_channels = 0;
 };

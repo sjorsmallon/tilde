@@ -136,6 +136,11 @@ uint32_t path_clock_tick(const entities::Path_Follow& follow, uint32_t tick)
   return follow.frozen_at_tick != 0 ? std::min(follow.frozen_at_tick, tick) : tick;
 }
 
+uint32_t path_running_ticks(const entities::Path_Follow& follow, uint32_t tick)
+{
+  return elapsed_ticks(follow.started_tick, path_clock_tick(follow, tick));
+}
+
 std::optional<path_pose_t> try_path_pose_at(const Entity_System& system, const path_links_t& links,
                                             const entities::Path_Follow& written_follow,
                                             uint32_t tick, uint32_t tickrate_hz)
@@ -173,6 +178,7 @@ void resume_path_follow(entities::Path_Follow& follow, uint32_t tick)
   if (follow.frozen_at_tick == 0)
     return;
   follow.segment_start_tick += tick - follow.frozen_at_tick;
+  follow.started_tick       += tick - follow.frozen_at_tick;
   follow.frozen_at_tick = 0;
 }
 

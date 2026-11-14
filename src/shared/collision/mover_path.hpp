@@ -64,6 +64,9 @@ struct path_pose_t
 
 [[nodiscard]] uint32_t path_clock_tick(const entities::Path_Follow& follow, uint32_t tick);
 
+// Ticks the follow has spent running since it was installed: time frozen does not count.
+[[nodiscard]] uint32_t path_running_ticks(const entities::Path_Follow& follow, uint32_t tick);
+
 void advance_path_follow(const Entity_System& system, const path_links_t& links,
                          entities::Path_Follow& follow, uint32_t tick, uint32_t tickrate_hz,
                          std::vector<entity_uid_t>& out_reached);

@@ -54,10 +54,11 @@
 Bunnyhop_Mode :: enum { none, hl2, cs }
 Locomotion_Model :: enum { quake, instant, instant_momentum, instant_redirect }
 
+// pm_maxspeed is actually 320 by default.
 // Read by every model and by the kernel.
 Player_Movement :: cvars {
-    pm_model:               Locomotion_Model = .quake  @Mirrored  "Movement style: quake (accelerate against friction), instant (horizontal velocity IS the input), instant_momentum (the same input rule beside a momentum outside speed lands in) or instant_redirect (the same, but carried speed can only be AIMED, never added to or cancelled)"
-    pm_maxspeed:            f32 = 320.0       @Mirrored  "Run speed: the most your own acceleration pushes you to"
+    pm_model:               Locomotion_Model = .instant  @Mirrored  "Movement style: quake (accelerate against friction), instant (horizontal velocity IS the input), instant_momentum (the same input rule beside a momentum outside speed lands in) or instant_redirect (the same, but carried speed can only be AIMED, never added to or cancelled)"
+    pm_maxspeed:            f32 = 500.0       @Mirrored  "Run speed: the most your own acceleration pushes you to"
     pm_overbounce:          f32 = 1.001       @Mirrored  "Plane clip overbounce factor"
     pm_jumpspeed:           f32 = 270.0       @Mirrored  "Jump velocity"
     g_gravity:              f32 = 800.0       @Mirrored  "Gravity"
@@ -439,7 +440,7 @@ Client :: cvars {
     // screen, via the unlit skinned pipeline. Half a character sitting in 0.15
     // ambient is the wrong light to judge a pose by.
     cl_player_unlit:        bool = false     @Client    "Draw player models unlit -- easier to read a pose than under the sun"
-    cl_afterimage_seconds:  f32 = 0.6       @Client    "How long the body a player was cut away from (a teleport) stands where it was, in the pose it left in, before it has dissolved (0 = none)"
+    cl_afterimage_seconds:  f32 = 0.6       @Client    "How long the body a player teleported away from stands where it was, in the pose it left in, before it has dissolved (0 = none)"
 
     cl_blob_shadow:            bool = true   @Client    "Draw a soft blob under every player where a straight-down ray hits the ground"
     cl_blob_shadow_radius:     f32 = 20.0    @Client    "Blob shadow radius at the feet, world units"
@@ -622,8 +623,8 @@ Debugging :: cvars {
     r_rim_width:            i32 = 3         @Client    "How many pixels in from the edge the rim light reaches; the ink covers the outermost r_ink_width of them"
     r_misprint:             f32 = 1.5       @Client    "Print misregistration: how many pixels the red and the blue of a far surface are drawn to either side of its green, the ink lines staying in place (0 = none)"
     r_misprint_distance:    f32 = 1024.0    @Client    "The distance, in world units, at which r_misprint is reached; a nearer surface is offset in proportion, so what is close stays in register"
-    r_cut_wipe_seconds:     f32 = 0.18      @Client    "How long a cut in the eye's place (a teleport) takes to peel the old view away, nearest first, behind an ink line (0 = the view just changes)"
-    r_cut_wipe_distance:    f32 = 128.0     @Client    "The distance, in world units, the peel of r_cut_wipe_seconds has reached half-way through; it reaches the horizon at the end"
+    r_teleport_visual_transition_wipe_seconds:  f32 = 0.18  @Client  "How long a teleport of the eye takes to peel the old view away, nearest first, behind an ink line (0 = the view just changes)"
+    r_teleport_visual_transition_wipe_distance: f32 = 128.0 @Client  "The distance, in world units, the peel of r_teleport_visual_transition_wipe_seconds has reached half-way through; it reaches the horizon at the end"
 
     r_flashlight_intensity: f32 = 20.0      @Client    "Brightness of the light a held Flashlight casts down its cone (a placed Reveal_Light_Entity carries its own), as the irradiance it delivers one metre away; 0 casts none and the cone still reveals"
     r_flashlight_red:       f32 = 1.0       @Client    "Red of a Flashlight's light"
@@ -645,9 +646,9 @@ Debugging :: cvars {
     r_beam_edge_pixels:     f32 = 2.0       @Client    "Width on screen of the line drawn where a beam ends on screen, its silhouette and where it lands, in the light's colour; 0 draws none"
     r_solid_shadow_edge:    bool = true     @Client    "Ink the edge of a solid light's shadow where it lands (Light::solid_shadows), the same line a crease or a depth jump gets, so the shadow reads as the object it is to a player"
     r_solid_shadow_fill:    f32 = 1.0       @Client    "How far a solid light's shadow is filled flat with r_solid_shadow_red/green/blue where it lands, over the cel fill (0 = drawn as any other shadow)"
-    r_solid_shadow_red:     f32 = 0.10      @Client    "Red of the flat colour a solid light's shadow is filled with"
-    r_solid_shadow_green:   f32 = 0.08      @Client    "Green of the flat colour a solid light's shadow is filled with"
-    r_solid_shadow_blue:    f32 = 0.16      @Client    "Blue of the flat colour a solid light's shadow is filled with"
+    r_solid_shadow_red:     f32 = 0.01      @Client    "Red of the flat colour a solid light's shadow is filled with"
+    r_solid_shadow_green:   f32 = 0.01      @Client    "Green of the flat colour a solid light's shadow is filled with"
+    r_solid_shadow_blue:    f32 = 0.01      @Client    "Blue of the flat colour a solid light's shadow is filled with"
     r_shadow_plank:         bool = false    @Client    "Draw a flat strip a body wide from a player held by a solid shadow to where their shadow lands"
     r_shadow_plank_alpha:   f32 = 0.6       @Client    "How dark the plank is; its edges are drawn solid"
 
@@ -775,6 +776,10 @@ Server_Commands :: commands {
     // Source's setpos: moves the CALLER's body, feet at the point, velocity
     // zeroed. The hand-typed verb; three floats because a command parameter has no v3.
     setpos(x: f32, y: f32, z: f32)     @Server  "Move the calling player's body to a position"
+
+    // A `string` for the same fence ent_fire's action name meets: Weapon is an
+    // entity-family enum. Matched without case, so the console stays lowercase.
+    give_weapon(weapon: string)        @Server  "Put a weapon with its default counts in the calling player's slot for it"
 
     // A client connects as a SPECTATOR -- it holds a slot with no player
     // entity -- and this is what gives it a body. @Server because spawning is

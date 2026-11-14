@@ -713,7 +713,32 @@ void Tool_Editor_State::update(float dt)
 
       if (input::is_key_pressed(input::key_t::Home))
       {
-        if (mods.shift)
+        if (mods.ctrl)
+        {
+          const Span<const shared::entity_uid_t> selected =
+              active_tool ? tools[*active_tool]->selected_objects()
+                          : Span<const shared::entity_uid_t>{};
+          const std::optional<shared::entity_uid_t> source =
+              !selected.empty()                        ? std::optional(selected.back())
+              : !context.selection_handed_over.empty() ? std::optional(context.selection_handed_over.back())
+                                                       : std::nullopt;
+          if (!source)
+          {
+            hud::set_announcement("Work plane: nothing is selected");
+          }
+          else if (const shared::map_entity_t* entry = map.find_by_uid(*source);
+                   entry && entry->entity)
+          {
+            context.work_plane_height = entry->entity->position.y;
+            announce_work_plane();
+          }
+          else
+          {
+            context.work_plane_height = editor_object_bounds(map, *source).min.y;
+            announce_work_plane();
+          }
+        }
+        else if (mods.shift)
         {
           context.work_plane_height = 0.0f;
           announce_work_plane();
@@ -1044,9 +1069,19 @@ void Tool_Editor_State::draw_imgui_panels()
       ImGui::Separator();
       if (ImGui::CollapsingHeader("Connections"))
       {
+        size_t row_to_remove = SIZE_MAX;
         const std::optional<shared::entity_uid_t> clicked_sender =
             draw_connection_overview(map, connection_refusals, connection_lines,
-                                     hovered_connection);
+                                     hovered_connection, row_to_remove);
+
+        if (row_to_remove < map.connections.size())
+        {
+          std::vector<shared::connection_t> before = map.connections;
+          map.connections.erase(map.connections.begin() + (std::ptrdiff_t)row_to_remove);
+          transaction_t transaction;
+          transaction.add_map_connections_modified(std::move(before), map.connections);
+          transaction_system.push("Remove refused connection", std::move(transaction));
+        }
 
         // The row's editable panel is the SENDER's, and that panel is the Selection
         // tool's -- so a click has to land there whatever tool was active.

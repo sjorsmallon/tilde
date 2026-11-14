@@ -914,8 +914,8 @@ static_assert(std::size(g_scene_data_images) == SCENE_DATA_IMAGE_COUNT,
 // Past the curve and the ink, in the swapchain's own format: what the antialiasing reads.
 static screen_target_t g_tonemapped_target{"tonemapped frame"};
 
-// The tonemapped frame before this one and its depth, kept while tonemap_settings_t::keep_last_frame, for the cut
-// wipe to draw over the new view. One of each, not per frame in flight: a frame's copy comes after its own tonemap
+// The tonemapped frame before this one and its depth, kept while tonemap_settings_t::keep_last_frame, for the
+// teleport visual transition wipe to draw over the new view. One of each, not per frame in flight: a frame's copy comes after its own tonemap
 // read of them and before the next frame's, on the one queue, so barriers order the three.
 struct last_frame_image_t
 {
@@ -3532,8 +3532,8 @@ struct tonemap_push_constants_t
   float ink_on_black              = 0.0f;
   float misprint_pixels           = 0.0f;
   float misprint_distance         = 1.0f;
-  float cut_wipe_fraction         = -1.0f; // below 0 is no wipe
-  float cut_wipe_distance         = 1.0f;
+  float teleport_visual_transition_wipe_fraction = -1.0f; // below 0 is no wipe
+  float teleport_visual_transition_wipe_distance = 1.0f;
   float lens_view_fraction        = 0.0f;
   float lens_view_red             = 1.0f;
   float lens_view_green           = 1.0f;
@@ -6427,9 +6427,9 @@ static bool try_create_shadow_pool(shadow_pool_t &pool, uint32_t size, uint32_t 
   sampler_info.addressModeU  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
   sampler_info.addressModeV  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
   sampler_info.addressModeW  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-  sampler_info.borderColor   = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE; // outside the map is LIT
+  sampler_info.borderColor   = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK; // outside the map is LIT: reversed depth, 0 is the far plane
   sampler_info.compareEnable = VK_TRUE;
-  sampler_info.compareOp     = VK_COMPARE_OP_LESS_OR_EQUAL;
+  sampler_info.compareOp     = VK_COMPARE_OP_GREATER_OR_EQUAL;
   if (vkCreateSampler(g_device, &sampler_info, nullptr, &pool.sampler) != VK_SUCCESS)
   {
     log_error("[renderer] could not create the shadow compare sampler");
@@ -6545,7 +6545,7 @@ static VkPipeline create_shadow_pipeline(bool skinned, bool cull_none, shadow_fr
       VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
   depth_stencil.depthTestEnable  = VK_TRUE;
   depth_stencil.depthWriteEnable = VK_TRUE;
-  depth_stencil.depthCompareOp   = VK_COMPARE_OP_LESS;
+  depth_stencil.depthCompareOp   = VK_COMPARE_OP_GREATER; // reversed depth: the nearest caster is the largest
 
   VkPipelineColorBlendStateCreateInfo color_blending{
       VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
@@ -8338,7 +8338,7 @@ static void record_shadow_layer(VkCommandBuffer cmd, const shadow_job_t &job,
   lap.next("shadow layer: begin pass + state");
 
   VkClearValue clear{};
-  clear.depthStencil = {1.0f, 0};
+  clear.depthStencil = {0.0f, 0};
 
   const bool           in_projector_pool = job.layer >= g_shadow_pool.layer_count;
   const shadow_pool_t &pool       = in_projector_pool ? g_projector_shadow_pool : g_shadow_pool;
@@ -8360,7 +8360,7 @@ static void record_shadow_layer(VkCommandBuffer cmd, const shadow_job_t &job,
   VkRect2D scissor{};
   scissor.extent = {pool.size, pool.size};
   vkCmdSetScissor(cmd, 0, 1, &scissor);
-  vkCmdSetDepthBias(cmd, 0.0f, 0.0f, settings.bias_slope);
+  vkCmdSetDepthBias(cmd, 0.0f, 0.0f, -settings.bias_slope);
 
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_shadow_pipeline_layout,
                           PASS_DESCRIPTOR_SET, 1, &g_shadow_pass_set, 1, &block_offset);
@@ -10162,8 +10162,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
       std::clamp(look.ink_on_black, 0.0f, 1.0f),
       std::max(look.misprint_pixels, 0.0f),
       std::max(look.misprint_distance, 1.0f),
-      tonemap.cut_wipe_fraction,
-      std::max(tonemap.cut_wipe_distance, 1.0f),
+      tonemap.teleport_visual_transition_wipe_fraction,
+      std::max(tonemap.teleport_visual_transition_wipe_distance, 1.0f),
       std::clamp(tonemap.lens_view_fraction, 0.0f, 1.0f),
       tonemap.lens_view_color.x,
       tonemap.lens_view_color.y,
@@ -10172,8 +10172,8 @@ void render_frame(Span<const view_pass_t> passes, const ui_draw_list_t &ui,
   record_fullscreen_draw(cmd, g_tonemap_draw, tonemap_push);
   vkCmdEndRenderPass(cmd);
 
-  // 6a. The last-frame copy, for the cut wipe: skipped while a wipe is drawing, so the kept frame stays the
-  //     one the cut left.
+  // 6a. The last-frame copy, for the teleport visual transition wipe: skipped while a wipe is drawing, so the kept
+  //     frame stays the one the teleport left.
   if (tonemap.keep_last_frame)
     record_last_frame_copy(cmd, frame);
   mark_gpu_pass_end(cmd, frame, gpu_pass_t::Tonemap);

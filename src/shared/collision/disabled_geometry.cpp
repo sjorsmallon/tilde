@@ -56,7 +56,7 @@ void compute_disabled_geometry(const Entity_System& system, Span<const entity_ui
                              return GEOMETRY_SOLID_UNLESS_SHADOWED;
                            if (owner.solid_only_in_shadow)
                              return GEOMETRY_SOLID_IN_SHADOW;
-                           if (owner.solid_only_when_lensed)
+                           if (owner.solid_only_when_viewed_through_a_lens)
                              return get_geometry_state_solid_where_lensed(owner.lens_filter);
                            return owner.solid_only_when_revealed ? GEOMETRY_SOLID_WHERE_LIT
                                                                  : GEOMETRY_SOLID;

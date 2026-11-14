@@ -7,6 +7,7 @@
 #include "replay_playback.hpp"
 
 #include "../shared/array.hpp"
+#include "../shared/collision/projectile_sweep.hpp"
 #include "../shared/cvars/generated/cvars_generated.hpp"
 #include "../shared/entities/entity_reflection.hpp"
 #include "../shared/map/game_session.hpp"
@@ -73,6 +74,18 @@ static constexpr int32_t invalid_slot_idx = -1;
 // every gate that assumes a server -- input, the reliable stream, the disconnect
 // message -- is off by being a different phase rather than a flag beside Connected.
 enum class Connection_Phase { Disconnected, Connecting, Loading, Connected, Replaying };
+
+inline constexpr uint32_t CONNECTION_PHASE_COUNT = 5;
+
+} // namespace client
+
+template <> struct enum_traits<client::Connection_Phase>
+{
+  static constexpr uint32_t count = client::CONNECTION_PHASE_COUNT;
+};
+
+namespace client
+{
 
 // --- Client-side prediction ring buffer entry ---
 struct Saved_Input
@@ -431,7 +444,7 @@ struct drawn_body_t
   uint8_t teleport_count = 0;
 };
 
-// The body a player was cut away from: drawn where it stood, in the aim pose it left in, dissolving over
+// The body a player teleported away from: drawn where it stood, in the aim pose it left in, dissolving over
 // cl_afterimage_seconds under a puff of dust.
 struct afterimage_t
 {
@@ -463,8 +476,8 @@ struct visual_effects_t
   float                                                  own_body_yaw = 0.f;
   std::vector<afterimage_t>                              afterimages;
   uint32_t                                               next_afterimage_index = 0;
-  // Seconds since the eye's own cut, while r_cut_wipe_seconds has the old view still peeling away; below 0 otherwise.
-  float cut_wipe_seconds = -1.f;
+  // Seconds since the eye's own teleport, while r_teleport_visual_transition_wipe_seconds has the old view still peeling away; below 0 otherwise.
+  float teleport_visual_transition_wipe_elapsed_seconds = -1.f;
   // The tonemap's page for the Red Lens view: how far it has faded in over r_lens_view_seconds, and the filter
   // it last faded in with, so a lens put away fades out in its own colour. The view itself is the prediction's
   // held_lens_on, never this.
@@ -492,6 +505,8 @@ struct visual_effects_t
   // The lens watchers that tick was held by, own eye from the prediction, copied for the same reason:
   // a lens_watched draw keeps what those eyes hold solid.
   std::vector<shared::lens_watcher_t>  drawn_lens_watchers;
+  // Where our own view ray lands while we hold a guided weapon, the laser dot; drawn for us alone.
+  std::optional<shared::laser_dot_t> drawn_laser_dot;
   // One per player held by a solid shadow this frame (shared/lighting/support_planks.hpp).
   std::vector<shared::support_plank_t>   drawn_support_planks;
   // The same cut's counts, and the line cl_shadow_volume_debug last printed for them.

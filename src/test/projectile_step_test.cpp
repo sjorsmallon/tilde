@@ -63,6 +63,37 @@ void test_the_rocket_launcher_row_does_not_drop()
   std::printf("  the rocket launcher row does not drop: ok\n");
 }
 
+void test_steering_keeps_the_speed_and_heads_for_the_point()
+{
+  const vec3f position = {0.f, 0.f, 0.f};
+  const vec3f velocity = {300.f, 0.f, 0.f};
+
+  const vec3f steered = steer_velocity_toward_point(position, velocity, {0.f, 0.f, 50.f}, 0.f);
+  assert(nearly_equal(steered, {0.f, 0.f, 300.f}, 1e-3f));
+
+  const vec3f on_the_point = steer_velocity_toward_point(position, velocity, {0.5f, 0.f, 0.f}, 0.f);
+  assert(nearly_equal(on_the_point, velocity, 0.f));
+  std::printf("  steering keeps the speed and heads for the point: ok\n");
+}
+
+void test_steering_turns_no_further_than_its_limit()
+{
+  const vec3f position = {0.f, 0.f, 0.f};
+  const vec3f velocity = {300.f, 0.f, 0.f};
+  const float diagonal = 300.f * std::sqrt(0.5f);
+
+  const vec3f halfway = steer_velocity_toward_point(position, velocity, {0.f, 0.f, 50.f}, 45.f);
+  assert(nearly_equal(halfway, {diagonal, 0.f, diagonal}, 1e-2f));
+
+  const vec3f within_the_limit = steer_velocity_toward_point(position, velocity, {0.f, 0.f, 50.f}, 120.f);
+  assert(nearly_equal(within_the_limit, {0.f, 0.f, 300.f}, 1e-2f));
+
+  const vec3f straight_behind = steer_velocity_toward_point(position, velocity, {-50.f, 0.f, 0.f}, 90.f);
+  assert(std::fabs(linalg::length(straight_behind) - 300.f) <= 1e-2f);
+  assert(std::fabs(linalg::dot(straight_behind, velocity)) <= 1e-1f);
+  std::printf("  steering turns no further than its limit: ok\n");
+}
+
 } // namespace
 
 int main()
@@ -71,6 +102,8 @@ int main()
   test_four_quarter_steps_are_one_whole_step();
   test_zero_gravity_scale_flies_straight();
   test_the_rocket_launcher_row_does_not_drop();
+  test_steering_keeps_the_speed_and_heads_for_the_point();
+  test_steering_turns_no_further_than_its_limit();
   std::printf("all projectile_step tests passed\n");
   return 0;
 }

@@ -77,6 +77,10 @@ struct projectile_t
   projectile_expiration_t   expiry;
   // Filled exactly when `spawns` is Shot_Entity.
   shot_t                    shot;
+  // How far the owner's view ray reaches to steer the shot; 0 flies unguided.
+  float                     guide_range;
+  // How fast a guided shot's heading turns toward where the ray lands; 0 snaps to it.
+  float                     guide_turn_degrees_per_second;
 };
 
 struct projectile_step_t
@@ -94,6 +98,34 @@ inline projectile_step_t advance_projectile(const projectile_t& projectile, floa
     .position = position + velocity * dt + acceleration * (0.5f * dt * dt),
     .velocity = velocity + acceleration * dt
   };
+}
+
+// Same speed, heading turned toward the point by at most max_turn_degrees; 0 or less turns all the way. A point the shot already sits on leaves the heading alone.
+inline vec3f steer_velocity_toward_point(vec3f position, vec3f velocity, vec3f point, float max_turn_degrees)
+{
+  const vec3f to_point = point - position;
+  const float distance = linalg::length(to_point);
+  const float speed    = linalg::length(velocity);
+  if (distance < 1.f || speed <= 0.f)
+    return velocity;
+
+  const vec3f wanted  = to_point * (1.f / distance);
+  const vec3f heading = velocity * (1.f / speed);
+  const float cosine  = std::clamp(linalg::dot(heading, wanted), -1.f, 1.f);
+  if (max_turn_degrees <= 0.f || std::acos(cosine) <= linalg::to_radians(max_turn_degrees))
+    return wanted * speed;
+
+  // The unit vector square to the heading, in the plane the turn happens in; straight behind picks any.
+  vec3f       sideways        = wanted - heading * cosine;
+  const float sideways_length = linalg::length(sideways);
+  if (sideways_length > 1e-4f)
+    sideways = sideways * (1.f / sideways_length);
+  else
+    sideways = linalg::normalize(linalg::cross(heading, std::fabs(heading.y) < 0.9f ? vec3f{0.f, 1.f, 0.f}
+                                                                                   : vec3f{1.f, 0.f, 0.f}));
+
+  const float turn = linalg::to_radians(max_turn_degrees);
+  return (heading * std::cos(turn) + sideways * std::sin(turn)) * speed;
 }
 
 // originate an entity from this position for projectiles.

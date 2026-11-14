@@ -56,7 +56,7 @@ void attach_override(entities::Movement& movement, const override_attach_t& atta
 
 // Writes None, drops the target and the clock. The position, speed and radius
 // stay readable: where a flight ended is read off override_target_position after
-// it has let go (guided_rocket_system, follow_pilot_flight). The exit impulse is
+// it has let go (piloted_rocket_system, follow_pilot_flight). The exit impulse is
 // the caller's: the step's end_override, the server's detachers.
 void clear_override(entities::Movement& movement);
 

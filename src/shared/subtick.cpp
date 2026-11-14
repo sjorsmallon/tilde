@@ -47,6 +47,20 @@ subtick_steps_t split_tick_input_into_subtick_steps(const Tick_Input& input,
   return result;
 }
 
+Tick_Input get_tick_input_to_apply_to_player(const Tick_Input& input_sent_by_players_client,
+                                             const std::optional<View>& view_of_player_steering_its_view)
+{
+  if (!view_of_player_steering_its_view)
+    return input_sent_by_players_client;
+
+  Tick_Input input_to_apply    = input_sent_by_players_client;
+  input_to_apply.view_at_start = *view_of_player_steering_its_view;
+  input_to_apply.view_at_end   = *view_of_player_steering_its_view;
+  for (Button_Change& change : input_to_apply.button_changes)
+    change.view_after = *view_of_player_steering_its_view;
+  return input_to_apply;
+}
+
 uint64_t subtick_presses(const Tick_Input& input, uint64_t buttons_before)
 {
   uint64_t rising   = input.buttons_at_start & ~buttons_before;

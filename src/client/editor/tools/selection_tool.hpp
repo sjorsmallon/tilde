@@ -133,9 +133,11 @@ shared::entity_uid_t hovered_uid = 0;
   void settle_live_drag(editor_context_t& ctx);
 
   // selection_tool_focus.cpp: Tab walks the selection one member at a time. The
-  // selection stays the group; the inspector and the outline read this one.
+  // selection stays the group; the inspector, the outline and the gizmo read
+  // this one.
   std::optional<shared::entity_uid_t> focused_uid{};
   void cycle_focus(bool backwards);
+  [[nodiscard]] Span<const shared::entity_uid_t> gizmo_target_uids() const;
   void draw_inspector_of_selection(editor_context_t& ctx);
   void draw_focus_outline(editor_context_t& ctx, draw_lists_t& draws);
 
@@ -275,7 +277,7 @@ shared::entity_uid_t hovered_uid = 0;
   [[nodiscard]] std::optional<shared::aabb_bounds_t>
   try_compute_selection_bounds(editor_context_t& ctx) const;
 
-  void capture_drag_snapshots(editor_context_t& ctx);
+  void capture_drag_snapshots(editor_context_t& ctx, Span<const shared::entity_uid_t> uids);
   void commit_drag_snapshots(editor_context_t& ctx, std::string name);
 
   void apply_gizmo_drag(editor_context_t& ctx, const gizmo_drag_t &drag);

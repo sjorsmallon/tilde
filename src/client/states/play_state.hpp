@@ -37,6 +37,12 @@ struct play_frame_t;
 // What one draw reads, handed from step to step down Play_State::draw. Defined in play_state_draw.cpp.
 struct draw_inputs_t;
 
+enum class route_input_result_t : uint8_t
+{
+  Continue_Frame,
+  Left_Play_State,
+};
+
 class Play_State : public Game_State
 {
 public:
@@ -59,15 +65,14 @@ private:
   // is the rule each of these is checked against -- nothing writes a session
   // entity outside snapshot apply and own-player prediction.
   //
-  // update_shell returns TRUE when it switched state, in which case this object
-  // no longer exists and the caller must return immediately.
-  [[nodiscard]] bool update_shell(client_context_t &ctx, play_frame_t &frame);
+  // After Left_Play_State this object no longer exists and the caller must return immediately.
+  [[nodiscard]] route_input_result_t route_input(client_context_t &ctx, play_frame_t &frame);
   void receive_from_server(client_context_t &ctx, play_frame_t &frame);
   void receive_map_transfer(client_context_t &ctx, Span<const network::uint8> payload);
   void retire_per_frame_visuals(client_context_t &ctx, play_frame_t &frame);
   void reconcile_with_server(client_context_t &ctx, play_frame_t &frame);
   void resolve_aim_and_buttons(client_context_t &ctx, play_frame_t &frame);
-  [[nodiscard]] shared::lens_watch_screen_t local_watch_screen(const client_context_t &ctx) const;
+  [[nodiscard]] shared::field_of_view_t compute_own_field_of_view(const client_context_t &ctx) const;
   void place_button_changes_on_the_tick_timeline(client_context_t &ctx, play_frame_t &frame);
   void run_predicted_ticks(client_context_t &ctx, play_frame_t &frame);
   void send_input_with_unacked_tail(client_context_t &ctx, const shared::Tick_Input &tick_input,
@@ -80,7 +85,7 @@ private:
   void ripple_team_walls(client_context_t &ctx, play_frame_t &frame);
   void ripple_solid_beams(client_context_t &ctx, play_frame_t &frame);
   void resolve_camera(client_context_t &ctx, play_frame_t &frame);
-  void leave_afterimages_at_cuts(client_context_t &ctx, play_frame_t &frame);
+  void leave_afterimages_after_teleports(client_context_t &ctx, play_frame_t &frame);
   void update_audio_listener(client_context_t &ctx, play_frame_t &frame);
 
   // The steps of `draw`, in the order it runs them. Each appends to `scene`
@@ -92,6 +97,7 @@ private:
   void draw_support_planks(client_context_t &ctx, const draw_inputs_t &frame);
   void draw_lights_and_beams(client_context_t &ctx, const draw_inputs_t &frame);
   void draw_rendered_entities(client_context_t &ctx, const draw_inputs_t &frame);
+  void draw_laser_dot(client_context_t &ctx, const draw_inputs_t &frame);
   void draw_afterimages_and_ghosts(client_context_t &ctx, const draw_inputs_t &frame);
   void draw_remote_players(client_context_t &ctx, const draw_inputs_t &frame);
   void draw_debug_overlays(client_context_t &ctx, const draw_inputs_t &frame);

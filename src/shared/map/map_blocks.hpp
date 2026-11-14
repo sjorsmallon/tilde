@@ -17,9 +17,11 @@
 //   property  := string string                 -- key, then value
 //   keyword   := 'entity' | 'cvars' | 'materials' | 'connections'
 //              | <a geometry kind>
-//   string    := '"' char* '"'                 -- no escapes; may contain spaces
+//   string    := '"' (char | escape)* '"'      -- every char kept as written, spaces included
+//   escape    := '\"' | '\\' | '\n' | '\r' | '\t' | '\0'
+//   char      := any character but '"' and '\'
 //
-// Tokens are whitespace-separated, so '{' and '}' must stand alone. This reader
+// A keyword and a brace are bare words ended by whitespace, so '{' and '}' must stand alone. This reader
 // doesn't know the keyword set: it reads EVERY block to its closing brace and
 // hands them all up, and parse_map_from_string reports-and-skips the ones it
 // doesn't recognize. That's what makes a map written by a newer build degrade to

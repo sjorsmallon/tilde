@@ -8,7 +8,7 @@
 #include "assets/asset_state.hpp"
 #include "entities/entity_reflection.hpp"
 #include "entities/generated/entities/extending_platform_entity_generated.hpp"
-#include "entities/generated/entities/guided_rocket_entity_generated.hpp"
+#include "entities/generated/entities/piloted_rocket_entity_generated.hpp"
 #include "entities/generated/entities/shot_entity_generated.hpp"
 #include "entities/generated/entities/player_entity_generated.hpp"
 #include "entities/generated/entities/weapon_entity_generated.hpp"
@@ -21,8 +21,8 @@
 #include "server_context.hpp"
 #include "spawn_projectile.hpp"
 #include "subtick.hpp"
-#include "systems/guided_rocket_system.hpp"
 #include "systems/inventory_system.hpp"
+#include "systems/piloted_rocket_system.hpp"
 #include "weapon_instance.hpp"
 #include "weapons.hpp"
 
@@ -773,14 +773,14 @@ int main()
     shared::Entity_System& entity_system = context.world.session.entity_system;
 
     constexpr uint32_t tickrate_hz = 60;
-    const shared::weapon_definition_t& guided_rocket =
-        shared::get_weapon_definition(entities::Weapon::Guided_Rocket);
-    const shared::pilot_t& row = guided_rocket.primary_fire.pilot;
+    const shared::weapon_definition_t& piloted_rocket =
+        shared::get_weapon_definition(entities::Weapon::Piloted_Rocket);
+    const shared::pilot_t& row = piloted_rocket.primary_fire.pilot;
     const vec3f eye = {0.f, shared::player_eye_height, 0.f};
 
     const shared::entity_uid_t pilot_uid = entity_system.spawn<entities::Player_Entity>();
     const auto pilot = [&]() { return entity_system.get<entities::Player_Entity>(pilot_uid); };
-    pilot()->last_fire_weapon = entities::Weapon::Guided_Rocket;
+    pilot()->last_fire_weapon = entities::Weapon::Piloted_Rocket;
 
     const auto count_segments = [&]() {
       uint32_t count = 0;
@@ -793,7 +793,7 @@ int main()
 
     const auto fly = [&](uint32_t first_tick, uint32_t tick_count) {
       pilot()->movement.seconds_until_impulse_ready = 0.f;
-      check(shared::try_begin_pilot_flight(guided_rocket, entities::Fire_Trigger::Primary, eye,
+      check(shared::try_begin_pilot_flight(piloted_rocket, entities::Fire_Trigger::Primary, eye,
                                            pilot()->movement),
             "the press launches");
       for (uint32_t tick = 0; tick < tick_count; ++tick)
@@ -801,13 +801,13 @@ int main()
         pilot()->movement.override_target_position =
             eye + vec3f{10.f * static_cast<float>(tick + 1), 0.f, 0.f};
         context.tick_number = first_tick + tick;
-        server::update_guided_rockets(context, tickrate_hz);
+        server::update_piloted_rockets(context, tickrate_hz);
       }
     };
 
     fly(100, 60);
-    Span<entities::Guided_Rocket_Entity> rockets =
-        entity_system.entities_of_type<entities::Guided_Rocket_Entity>();
+    Span<entities::Piloted_Rocket_Entity> rockets =
+        entity_system.entities_of_type<entities::Piloted_Rocket_Entity>();
     check(rockets.size() == 1 && rockets[0].pilot_uid == pilot_uid, "a pilot has exactly one rocket");
     check(rockets.size() == 1 && rockets[0].position.x == 600.f &&
               rockets[0].position.y == shared::player_eye_height,
@@ -816,9 +816,9 @@ int main()
 
     pilot()->movement.active_override = entities::Movement_Override::None;
     context.tick_number               = 160;
-    server::update_guided_rockets(context, tickrate_hz);
+    server::update_piloted_rockets(context, tickrate_hz);
 
-    check(entity_system.entities_of_type<entities::Guided_Rocket_Entity>().empty(),
+    check(entity_system.entities_of_type<entities::Piloted_Rocket_Entity>().empty(),
           "the rocket goes the tick the flight has ended");
     check(count_segments() == 3, "600 units of straight flight is three segments");
     check(context.world.flight_path_by_rocket_uid.empty(), "and the recording goes with the rocket");
@@ -845,15 +845,15 @@ int main()
     fly(300, 30);
     pilot()->movement.active_override = entities::Movement_Override::None;
     context.tick_number               = 330;
-    server::update_guided_rockets(context, tickrate_hz);
+    server::update_piloted_rockets(context, tickrate_hz);
     check(count_segments() == 2, "a second flight replaces the path the first one left");
 
     fly(400, 30);
     pilot()->health.current_health = 0;
     context.tick_number            = 430;
-    server::update_guided_rockets(context, tickrate_hz);
+    server::update_piloted_rockets(context, tickrate_hz);
     check(pilot()->movement.override_seconds_remaining == 0.f, "a dead pilot's flight is let go");
-    check(entity_system.entities_of_type<entities::Guided_Rocket_Entity>().empty(), "its rocket goes");
+    check(entity_system.entities_of_type<entities::Piloted_Rocket_Entity>().empty(), "its rocket goes");
     check(count_segments() == 2, "and it leaves no path of its own");
   }
 

@@ -53,9 +53,12 @@ void draw_connection_lines(const shared::map_t& map, const viewport_state_t& vie
 // `hovered_row` is written every frame, SIZE_MAX when the cursor is on no row,
 // and is what draw_connection_lines then draws bright -- pointing at a row IS
 // the ask to see that wire, and it costs no selection change to answer.
+//
+// A REFUSED row carries a Remove button: a row whose sender is gone has no panel to be removed from.
+// `row_to_remove` is the row it was pressed on, SIZE_MAX for none; the caller removes it in a transaction.
 [[nodiscard]] std::optional<shared::entity_uid_t>
 draw_connection_overview(const shared::map_t& map,
                          Span<const shared::connection_refusal_t> refusals,
-                         connection_line_mode_t& mode, size_t& hovered_row);
+                         connection_line_mode_t& mode, size_t& hovered_row, size_t& row_to_remove);
 
 } // namespace client

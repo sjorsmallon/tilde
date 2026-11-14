@@ -30,22 +30,21 @@ constexpr linalg::vec3 POINT_HALF_EXTENTS{2.f, 2.f, 2.f};
 struct surface_pick_t
 {
   shared::entity_uid_t uid = shared::null_entity_uid;
-  linalg::vec3 point;
+  linalg::vec3 point{};
 };
 
 std::optional<surface_pick_t> try_pick_surface(const editor_context_t &ctx,
                                                const viewport_state_t &view)
 {
-  if (!ctx.bvh || ctx.bvh->nodes.empty())
-    return std::nullopt;
+  if (!ctx.bvh || ctx.bvh->nodes.empty()) return std::nullopt;
 
-  ray_hit_result_t hit{};
-  if (!bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin, view.mouse_ray.direction, hit))
-    return std::nullopt;
+  auto hit = ray_hit_result_t{};
+  if (!bvh_intersect_ray(*ctx.bvh, view.mouse_ray.origin, view.mouse_ray.direction, hit)) return std::nullopt;
 
   const float step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
   const linalg::vec3 point = view.mouse_ray.origin + view.mouse_ray.direction * hit.t;
-  surface_pick_t pick;
+
+  auto pick = surface_pick_t{};
   pick.uid = hit.id.type == Collision_Id::Type::Static_Geometry
                  ? shared::entity_uid_t(hit.id.index)
                  : shared::null_entity_uid;
@@ -57,37 +56,36 @@ std::optional<surface_pick_t> try_pick_surface(const editor_context_t &ctx,
 std::optional<Plane> try_plane_through(Span<const linalg::vec3> points,
                                        const linalg::vec3 &view_forward)
 {
-  if (points.count < 2)
-    return std::nullopt;
+  if (points.count < 2) return std::nullopt;
 
   const linalg::vec3 along = points[1] - points[0];
   const linalg::vec3 across = points.count >= 3 ? points[2] - points[0] : view_forward;
   const linalg::vec3 normal = linalg::cross(along, across);
+
   const float length = linalg::length(normal);
   if (length < 1e-3f)
     return std::nullopt;
   return Plane{points[0], normal * (1.f / length)};
 }
 
-const char *keep_label(int keep)
+const char* keep_label(int keep)
 {
   switch (keep)
   {
-  case 0: return "both";
-  case 1: return "front";
-  default: return "back";
+    case 0: return "both";
+    case 1: return "front";
+    default: return "back";
   }
 }
 
-const shared::mesh_geometry_t *try_find_mesh(const editor_context_t &ctx,
+const shared::mesh_geometry_t* try_find_mesh(const editor_context_t &ctx,
                                              shared::entity_uid_t uid)
 {
   const shared::map_geometry_t *entry = ctx.map ? ctx.map->find_geometry_by_uid(uid) : nullptr;
   return entry ? &entry->value : nullptr;
 }
 
-// Every face through the pose, the caps (the last `cap_face_count`) outlined.
-void draw_half_tinted(draw_lists_t &draws, const shared::mesh_geometry_t &half, color_t fill,
+void draw_half_tinted(draw_lists_t& draws, const shared::mesh_geometry_t& half, color_t fill,
                       uint32_t cap_face_count)
 {
   const size_t first_cap = half.faces.size() - std::min<size_t>(cap_face_count, half.faces.size());
@@ -126,10 +124,10 @@ void Clip_Tool::clear()
 void Clip_Tool::on_update(editor_context_t &ctx, const viewport_state_t &view, float)
 {
   cached_view = view;
-  if (target_uid == shared::null_entity_uid)
-    return;
 
-  const shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(target_uid);
+  if (target_uid == shared::null_entity_uid) return;
+
+  const shared::map_geometry_t* entry = ctx.map->find_geometry_by_uid(target_uid);
   if (!entry)
   {
     hud::set_announcement("clip: the mesh is gone");
@@ -138,7 +136,9 @@ void Clip_Tool::on_update(editor_context_t &ctx, const viewport_state_t &view, f
   }
 
   if (previewed_value && !shared::geometry_values_equal(*previewed_value, entry->value))
+  {
     rebuild_preview(ctx);
+  }
 }
 
 void Clip_Tool::rebuild_cut_plane()
@@ -158,14 +158,14 @@ void Clip_Tool::rebuild_preview(editor_context_t &ctx)
 {
   preview.reset();
   previewed_value.reset();
-  if (!cut_plane || target_uid == shared::null_entity_uid)
-    return;
 
-  const shared::map_geometry_t *entry = ctx.map->find_geometry_by_uid(target_uid);
-  const shared::mesh_geometry_t *mesh =
-      entry ? &entry->value : nullptr;
-  if (!mesh)
-    return;
+  if (!cut_plane || target_uid == shared::null_entity_uid) return;
+
+  const shared::map_geometry_t* entry = ctx.map->find_geometry_by_uid(target_uid);
+  const shared::mesh_geometry_t* mesh = entry ? &entry->value : nullptr;
+
+  if (!mesh) return;
+
   previewed_value = entry->value;
 
   const Plane local_plane = shared::compute_mesh_local_plane(*mesh, *cut_plane);
@@ -177,15 +177,18 @@ void Clip_Tool::rebuild_preview(editor_context_t &ctx)
 
   // The caps take the clicked face's material half with a fresh projection
   // for their own normal; a grid is the clicked face's shape, never the cap's.
-  shared::face_surface_t cap_surface;
+  auto cap_surface = shared::face_surface_t{};
   if (cap_face_index && *cap_face_index < mesh->faces.size())
+  {
     cap_surface = mesh->faces[*cap_face_index].surface;
+  }
+
   shared::resize_face_grid(cap_surface, 0);
   cap_surface.uv = shared::default_face_uv(cut_plane->normal);
 
   preview = shared::try_split_mesh_by_plane(*mesh, local_plane, cap_surface);
-  if (!preview)
-    hud::set_announcement("clip refused: see the log");
+
+  if (!preview) hud::set_announcement("clip refused: see the log");
 }
 
 void Clip_Tool::on_mouse_down(editor_context_t &ctx, const input::mouse_event_t &e)
@@ -200,15 +203,14 @@ void Clip_Tool::on_mouse_down(editor_context_t &ctx, const input::mouse_event_t 
     points.pop_back();
     rebuild_cut_plane();
     rebuild_preview(ctx);
+
     return;
   }
 
-  if (e.button != input::mouse_button_t::Left)
-    return;
+  if (e.button != input::mouse_button_t::Left) return;
 
   const std::optional<surface_pick_t> pick = try_pick_surface(ctx, cached_view);
-  if (!pick)
-    return;
+  if (!pick)return;
 
   if (target_uid == shared::null_entity_uid || points.size() >= 3)
   {
@@ -242,8 +244,11 @@ void Clip_Tool::on_key_down(editor_context_t &ctx, const key_event_t &e)
   switch (e.key)
   {
   case input::key_t::Tab:
-    keep = keep == Keep::Both ? Keep::Front : keep == Keep::Front ? Keep::Back : Keep::Both;
-    return;
+  {
+      keep = keep == Keep::Both ? Keep::Front : keep == Keep::Front ? Keep::Back : Keep::Both;
+      return;  
+  }
+    
   case input::key_t::Enter:
     commit(ctx);
     return;
@@ -271,7 +276,7 @@ void Clip_Tool::commit(editor_context_t &ctx)
     return;
   }
 
-  transaction_t transaction;
+  auto transaction = transaction_t{};
   const shared::mesh_geometry_t removed = entry->value;
   std::vector<shared::map_group_t> groups_before = ctx.map->groups;
   ctx.map->remove_geometry(target_uid);
@@ -322,7 +327,7 @@ void Clip_Tool::on_draw_inspector(editor_context_t &)
   ImGui::Text("Points: %d / 3", (int)points.size());
   ImGui::Text("Keep: %s  (Tab)", keep_label((int)keep));
   ImGui::TextUnformatted(preview ? "Enter commits" : "No cut yet");
-  ImGui::TextUnformatted("Right click removes a point, Escape clears");
+  ImGui::TextUnformatted("Right click removes a point. Escape clears");
 }
 
 } // namespace client

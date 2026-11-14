@@ -8,13 +8,10 @@
 namespace client
 {
 
-// A sculpt stroke covers every brush whose bounds meet its sphere and writes
-// the same offset at the same world position in each: the weld across brushes
-// is by construction, never a read-side step. geometry_def.md Track F.
 struct stroke_brush_before_t
 {
   shared::entity_uid_t uid = shared::null_entity_uid;
-  shared::mesh_geometry_t before;
+  shared::mesh_geometry_t before{};
 };
 
 // Remember `uid`'s value before the stroke first writes it. A later call for

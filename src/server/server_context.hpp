@@ -161,7 +161,7 @@ struct world_t
 
   std::unordered_map<shared::entity_uid_t, uint32_t> death_tick_by_player_uid;
 
-  // The polyline each live Guided_Rocket_Entity has flown so far, solidified or dropped the tick it is destroyed.
+  // The polyline each live Piloted_Rocket_Entity has flown so far, solidified or dropped the tick it is destroyed.
   std::unordered_map<shared::entity_uid_t, shared::flight_path_t> flight_path_by_rocket_uid;
 
   // Entity I/O: every action a connection has requested and not yet delivered,

@@ -1,6 +1,6 @@
 #pragma once
 
-// The path a piloted rocket leaves (guided_rocket_plan.md step 2): a polyline recorded while it flies,
+// The path a piloted rocket leaves (piloted_rocket_plan.md step 2): a polyline recorded while it flies,
 // and the oriented boxes its edges become when the flight ends. The rule that lays the vertices is also
 // how a trail (trail.hpp) lays its points.
 

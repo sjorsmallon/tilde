@@ -21,6 +21,8 @@ struct Mover_Entity : Entity
 
   Enabled switch_state;
   Path_Follow follow;
+  linalg::vec3f spin_axis;
+  float spin_degrees_per_second;
 };
 
 // The entity pool is a byte buffer: it copies with memcpy and runs no

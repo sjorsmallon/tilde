@@ -93,6 +93,17 @@ std::optional<projectile_hit_t> sweep_projectile(const Bounding_Volume_Hierarchy
   return nearest;
 }
 
+std::optional<laser_dot_t> find_laser_dot(const Bounding_Volume_Hierarchy& bvh,
+                                          const predicted_world_t& world,
+                                          const linalg::vec3f& eye, const linalg::vec3f& aim,
+                                          float range)
+{
+  const std::optional<projectile_hit_t> hit = sweep_projectile(bvh, world, eye, eye + aim * range, 0.f);
+  if (!hit)
+    return std::nullopt;
+  return laser_dot_t{.position = hit->position, .normal = hit->normal};
+}
+
 std::optional<projectile_hit_t> sweep_body(const Bounding_Volume_Hierarchy& bvh,
                                            const predicted_world_t& world,
                                            const linalg::vec3f& from, const linalg::vec3f& to,

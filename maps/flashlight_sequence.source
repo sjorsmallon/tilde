@@ -107,7 +107,7 @@ groups
 mesh
 {
   "_uid" "1"
-  "position" "3.11694336 -129.466888 0"
+  "position" "-49.3952026 -129.466888 12.4439392"
   "rotation" "0 0 0 1"
   "vertices" "-643.11499 -56.1538391 -640, -643.11499 -56.1538391 640, -643.11499 56.1538391 -640, -643.11499 56.1538391 640, 643.11499 -56.1538391 -640, 643.11499 -56.1538391 640, 643.11499 56.1538391 -640, 643.11499 56.1538391 640"
   "color" "1.000000 1.000000 1.000000"
@@ -322,7 +322,7 @@ mesh
 mesh
 {
   "_uid" "20"
-  "position" "527.433899 -61.7059212 143.036026"
+  "position" "527.433899 303.800964 177.064102"
   "rotation" "0 0 0.0290951189 0.999576688"
   "asset" "resources/glb/button.glb"
   "scale" "1 1 1"
@@ -351,6 +351,7 @@ entity
   "switch_state.value" "true"
   "volume.position" "0 0 0"
   "volume.half_extents" "6352.2314 88.58918 7115.7646"
+  "touched_by" "Anything"
 }
 entity
 {
@@ -381,6 +382,7 @@ entity
   "switch_state.value" "true"
   "volume.position" "0 0 0"
   "volume.half_extents" "288.41217 178.42236 245.82585"
+  "touched_by" "Anything"
 }
 entity
 {
@@ -396,6 +398,7 @@ entity
   "light.source_radius" "0"
   "light.casts_shadows" "true"
   "light.cuts_geometry" "false"
+  "light.solid_shadows" "None"
   "rides.mover" "0"
   "range" "591.2"
   "inner_degrees" "20"
@@ -427,6 +430,7 @@ entity
   "light.source_radius" "0"
   "light.casts_shadows" "true"
   "light.cuts_geometry" "false"
+  "light.solid_shadows" "None"
   "rides.mover" "0"
   "range" "4096"
   "inner_degrees" "20"
@@ -466,8 +470,9 @@ entity
   "erased_in_shadow" "false"
   "revealed_by_lens" "false"
   "lens_filter" "Red"
-  "solid_only_when_lensed" "false"
+  "solid_only_when_viewed_through_a_lens" "false"
   "casts_dynamic_shadow" "false"
+  "casts_solid_from_lens" "false"
 }
 entity
 {
@@ -483,6 +488,7 @@ entity
   "light.source_radius" "0"
   "light.casts_shadows" "true"
   "light.cuts_geometry" "false"
+  "light.solid_shadows" "None"
   "rides.mover" "0"
   "range" "2229.3"
   "inner_degrees" "20"
@@ -494,12 +500,13 @@ entity
 {
   "classname" "trigger_volume_entity"
   "_uid" "22"
-  "position" "527.728 -49.92548 141.63994"
+  "position" "527.728 286.7522 169.78209"
   "orientation" "0 0 0 1"
   "name" ""
   "switch_state.value" "true"
   "volume.position" "0 0 0"
   "volume.half_extents" "98.17226 12.194114 99.351395"
+  "touched_by" "Anything"
 }
 entity
 {

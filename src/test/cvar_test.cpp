@@ -182,6 +182,7 @@ void noclip(const command_context_t&) {}
 void grab_frame(const command_context_t&) {}
 void grab_clear(const command_context_t&) {}
 void setpos(float, float, float, const command_context_t&) {}
+void give_weapon(std::string_view, const command_context_t&) {}
 void join_game_at(float, float, float, float, float, const command_context_t&) {}
 void sv_mem_report(int32_t, const command_context_t&) {}
 void frame_report(const command_context_t&) {}

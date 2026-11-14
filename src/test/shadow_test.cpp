@@ -1,7 +1,7 @@
 // Gate 9, the shadow-map maths that lives outside the renderer
 // (shared/lighting.hpp). spot_shadow_projection: a spot light's frustum IS its
 // cone, so the pin is geometric -- the cone's edge lands on the map's edge, the
-// range lands on depth 1, and the texel size is the cone's width over the
+// range lands on depth 0 (reversed), and the texel size is the cone's width over the
 // resolution. directional_shadow_cascades: every slice corner lands inside its
 // cascade's map, a caster toward the sun is inside its depth range, a camera
 // turn changes no box's size and a camera move shifts it by whole texels. The
@@ -58,13 +58,13 @@ int main()
   const shared::shadow_projection_t projection = shared::spot_shadow_projection(light, RESOLUTION);
   const linalg::mat4f&              matrix     = projection.view_projection;
 
-  // Along the axis: the range is the far plane, the near plane is depth 0.
+  // Along the axis, reversed depth: the range is the far plane at depth 0, the near plane is depth 1.
   const vec3f at_range = project(matrix, light.position + light.forward * light.range);
   check(near(at_range.x, 0.f) && near(at_range.y, 0.f), "the cone axis projects to the map centre");
-  check(near(at_range.z, 1.f, 1e-4f), "the range projects to depth 1");
+  check(near(at_range.z, 0.f, 1e-4f), "the range projects to depth 0");
 
   const vec3f at_near = project(matrix, light.position + light.forward * shared::SHADOW_NEAR_PLANE);
-  check(near(at_near.z, 0.f, 1e-4f), "the near plane projects to depth 0");
+  check(near(at_near.z, 1.f, 1e-4f), "the near plane projects to depth 1");
 
   // Across the axis: a point exactly on the cone's edge lands on the map's edge,
   // whichever world direction the light's frame put it in.
@@ -294,7 +294,7 @@ int main()
       const vec3f at_range =
           project(faces.faces[face].projection.view_projection, axes[face] * point.range);
       axis_centred = axis_centred && near(at_range.x, 0.f) && near(at_range.y, 0.f) &&
-                     near(at_range.z, 1.f, 1e-4f);
+                     near(at_range.z, 0.f, 1e-4f);
       check(shared::compute_point_shadow_face_for_direction(axes[face]) == face, "a face's axis picks that face");
     }
     check(axis_centred, "every face's axis projects to its map centre at depth 1");

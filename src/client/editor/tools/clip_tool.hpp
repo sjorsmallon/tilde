@@ -10,12 +10,7 @@
 namespace client
 {
 
-// Cut one mesh by a plane: the split of geometry_def.md §11.8 increment 2,
-// driven by hand. The first click picks the mesh and the face the caps
-// inherit; two points plus the view direction at the second click define the
-// plane, a third point replaces that with the plane through all three. Both
-// halves draw tinted, Tab cycles what is kept, Enter commits one transaction
-// replacing the mesh by the shells of the kept halves.
+// cut a mesh by a plane. save both, front or back.
 class Clip_Tool : public Editor_Tool
 {
 public:
@@ -40,13 +35,13 @@ private:
   };
 
   shared::entity_uid_t target_uid = shared::null_entity_uid;
-  std::optional<uint32_t> cap_face_index;
-  std::vector<linalg::vec3> points;
-  std::optional<Plane> cut_plane;
+  std::optional<uint32_t> cap_face_index{};
+  std::vector<linalg::vec3> points{};
+  std::optional<Plane> cut_plane{};
   Keep keep = Keep::Both;
 
-  std::optional<shared::mesh_split_t> preview;
-  std::optional<shared::mesh_geometry_t> previewed_value;
+  std::optional<shared::mesh_split_t> preview{};
+  std::optional<shared::mesh_geometry_t> previewed_value{};
 
   viewport_state_t cached_view{};
 

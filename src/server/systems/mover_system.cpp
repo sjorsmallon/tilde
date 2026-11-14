@@ -23,6 +23,7 @@ void install_movers(server_context_t& context)
   {
     (void)mover;
     follow.segment_start_tick = context.tick_number;
+    follow.started_tick       = context.tick_number;
     follow.frozen_at_tick     = 0;
   }
   update_mover_switches(context);

@@ -124,15 +124,16 @@ std::string describe_hovered_object(const shared::map_t &map, shared::entity_uid
 } // namespace
 
 
-// Capture the pre-drag state of everything selected. Both regimes go into the
-// same map keyed by uid, so the drag itself never asks which is which.
-void Selection_Tool::capture_drag_snapshots(editor_context_t& ctx)
+// Capture the pre-drag state of everything the drag will move. Both regimes go
+// into the same map keyed by uid, so the drag itself never asks which is which.
+void Selection_Tool::capture_drag_snapshots(editor_context_t& ctx,
+                                            Span<const shared::entity_uid_t> uids)
 {
   drag_baseline.clear();
   if (!ctx.map)
     return;
 
-  for (shared::entity_uid_t uid : selected_uids)
+  for (shared::entity_uid_t uid : uids)
   {
     const std::optional<linalg::vec3> position = shared::try_get_object_position(*ctx.map, uid);
     if (!position)
@@ -286,7 +287,7 @@ void Selection_Tool::apply_gizmo_drag(editor_context_t& ctx, const gizmo_drag_t 
 void Selection_Tool::apply_transform_as_one_edit(editor_context_t   &ctx,
                                                  const gizmo_drag_t &transform, std::string name)
 {
-  capture_drag_snapshots(ctx);
+  capture_drag_snapshots(ctx, selected_uids);
   apply_gizmo_drag(ctx, transform);
   settle_live_drag(ctx);
   commit_drag_snapshots(ctx, std::move(name));
@@ -413,7 +414,7 @@ void Selection_Tool::draw_multi_selection_panel(editor_context_t& ctx)
     // apply_gizmo_drag -- every object rounds to its own nearest cell.
     const float step = ctx.grid ? ctx.grid->step() : editor::MAJOR_GRID_STEP;
 
-    capture_drag_snapshots(ctx);
+    capture_drag_snapshots(ctx, selected_uids);
     for (const drag_origin_t &origin : drag_baseline.origins)
     {
       const linalg::vec3 snapped = {editor::snap(origin.position.x, step),
@@ -1862,23 +1863,25 @@ void Selection_Tool::on_update(editor_context_t& ctx,
     return;
   }
 
-  // Point the gizmo at the selection, however many objects that is.
-  if (selected_uids.empty())
+  // Point the gizmo at the selection, however many objects that is, or at the
+  // one member Tab has focused.
+  const Span<const shared::entity_uid_t> gizmo_targets = gizmo_target_uids();
+  if (gizmo_targets.count == 0)
   {
     editor_gizmo.clear_target();
   }
-  else if (selected_uids.size() == 1)
+  else if (gizmo_targets.count == 1)
   {
     // BOTH capabilities come from the map seam rather than from a type test
     // here: an object with no editable box cannot be reshaped, one with no
     // orientation cannot be rotated, and those are exactly the two questions
     // try_get_object_box / try_get_object_orientation already answer. So this
     // tool has no entity-vs-geometry branch in it at all.
-    const shared::entity_uid_t          uid = selected_uids[0];
+    const shared::entity_uid_t uid = gizmo_targets[0];
     const std::optional<shared::aabb_t> editable_box =
         shared::try_get_object_box(*ctx.map, uid);
 
-    gizmo_capabilities_t capabilities;
+    auto capabilities =  gizmo_capabilities_t{};
     capabilities.reshape = editable_box.has_value();
     capabilities.rotate  = shared::try_get_object_orientation(*ctx.map, uid).has_value();
 
@@ -2135,7 +2138,7 @@ void Selection_Tool::on_mouse_down(editor_context_t& ctx,
 
     if (editor_gizmo.try_begin_drag(cached_viewport.mouse_ray, make_gizmo_view()))
     {
-      capture_drag_snapshots(ctx);
+      capture_drag_snapshots(ctx, gizmo_target_uids());
       return;
     }
 
@@ -2146,7 +2149,7 @@ void Selection_Tool::on_mouse_down(editor_context_t& ctx,
     {
       press_position   = e.position;
       box_drag.current_position = e.position;
-      capture_drag_snapshots(ctx);
+      capture_drag_snapshots(ctx, selected_uids);
 
       if (!drag_baseline.origins.empty())
       {

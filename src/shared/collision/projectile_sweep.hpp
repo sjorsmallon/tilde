@@ -53,6 +53,17 @@ sweep_sphere_against_movers(Span<const mover_t> movers, Span<const entity_uid_t>
 sweep_projectile(const Bounding_Volume_Hierarchy& bvh, const predicted_world_t& world,
                  const linalg::vec3f& from, const linalg::vec3f& to, float radius);
 
+struct laser_dot_t
+{
+  linalg::vec3f position;
+  linalg::vec3f normal;
+};
+
+// The laser dot: where a view ray lands on the map and the movers through the viewer's team view, never a player. Nothing within range is no dot.
+[[nodiscard]] std::optional<laser_dot_t>
+find_laser_dot(const Bounding_Volume_Hierarchy& bvh, const predicted_world_t& world,
+               const linalg::vec3f& eye, const linalg::vec3f& aim, float range);
+
 // What a bounce body asks instead: the same sweep, except it passes an erasable piece where an erase cone holds all it touches, as a hull does.
 [[nodiscard]] std::optional<projectile_hit_t>
 sweep_body(const Bounding_Volume_Hierarchy& bvh, const predicted_world_t& world,

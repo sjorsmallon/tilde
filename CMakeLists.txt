@@ -1043,7 +1043,7 @@ add_library(game_server SHARED
     src/server/systems/bubble_system.cpp
     src/server/systems/platform_system.cpp
     src/server/systems/canopy_system.cpp
-    src/server/systems/guided_rocket_system.cpp
+    src/server/systems/piloted_rocket_system.cpp
     src/server/systems/trail_system.cpp
     src/server/systems/fixed_arc_flight_launch.cpp
     src/server/systems/timed_movement_modifier_system.cpp
@@ -1235,6 +1235,7 @@ add_game_test(prefab_test)
 # Map group: exclusive membership, inert deleted members, the file block, the
 # load clean, and the three carriers.
 add_game_test(map_group_test)
+add_game_test(map_blocks_test)
 add_game_test(navmesh_test)
 
 # Guards the generated entity layout: trivial copyability (memcpy snapshots and
@@ -1433,7 +1434,7 @@ add_game_test(entity_io_test
     DEFINITIONS GAME_SERVER_EXPORTS)
 
 add_game_test(inventory_test
-    SOURCES src/server/systems/guided_rocket_system.cpp ${MATCH_SERVER_SOURCES}
+    SOURCES src/server/systems/piloted_rocket_system.cpp ${MATCH_SERVER_SOURCES}
     INCLUDES src/server
     DEFINITIONS GAME_SERVER_EXPORTS)
 
