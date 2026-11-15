@@ -268,8 +268,7 @@ bool intersect_ray_primitive(const BVH_Primitive &prim, const vec3f &origin, con
 // sphere reaches by its edge is visited; zero is the ray.
 template <typename Cutoff_T, typename Visit_T>
 void walk_ray(const Bounding_Volume_Hierarchy &bvh, const vec3f &origin, const vec3f &dir,
-              Span<const uint8_t> disabled_geometry, Cutoff_T cutoff, Visit_T visit,
-              float inflate = 0.f)
+              Cutoff_T cutoff, Visit_T visit, float inflate = 0.f)
 {
   std::vector<uint32_t> node_stack;
   node_stack.reserve(64);
@@ -299,11 +298,7 @@ void walk_ray(const Bounding_Volume_Hierarchy &bvh, const vec3f &origin, const v
     }
 
     for (uint32_t i = 0; i < node.entity_count; ++i)
-    {
-      const BVH_Primitive &prim = bvh.primitives[node.first_entity_index + i];
-      if (!collision_is_disabled(disabled_geometry, prim.id))
-        visit(prim);
-    }
+      visit(bvh.primitives[node.first_entity_index + i]);
   }
 }
 
@@ -321,9 +316,11 @@ bool bvh_intersect_ray(const Bounding_Volume_Hierarchy &bvh,
   out_hit.t_exit = FLT_MAX;
   out_hit.normal = {0.f, 0.f, 0.f};
 
-  walk_ray(bvh, origin, dir, disabled_geometry, [&] { return out_hit.t; },
+  walk_ray(bvh, origin, dir, [&] { return out_hit.t; },
            [&](const BVH_Primitive &prim)
            {
+             if (collision_is_disabled(disabled_geometry, prim.id))
+               return;
              ray_hit_result_t candidate;
              if (intersect_ray_primitive(prim, origin, dir, out_hit.t, candidate) &&
                  candidate.t < out_hit.t)
@@ -354,9 +351,11 @@ std::optional<sweep_hit_t> sweep_sphere_unless_passed(const Bounding_Volume_Hier
   const auto cutoff = [&] { return nearest ? nearest->t : 1.f; };
 
   walk_ray(
-      bvh, from, dir, disabled_geometry, cutoff,
+      bvh, from, dir, cutoff,
       [&](const BVH_Primitive &prim)
       {
+        if (get_geometry_state_by_collision_id(disabled_geometry, prim.id) == GEOMETRY_NOT_THERE)
+          return;
         float t_prim;
         float t_exit_prim;
         vec3f normal_prim;
@@ -386,14 +385,6 @@ std::optional<sweep_hit_t> sweep_sphere_unless_passed(const Bounding_Volume_Hier
 
 } // namespace
 
-std::optional<sweep_hit_t> bvh_sweep_sphere(const Bounding_Volume_Hierarchy &bvh,
-                                            const vec3f& from, const vec3f& to, float radius,
-                                            Span<const uint8_t> disabled_geometry)
-{
-  return sweep_sphere_unless_passed(bvh, from, to, radius, disabled_geometry,
-                                    [](const BVH_Primitive &, float) { return false; });
-}
-
 std::optional<sweep_hit_t>
 bvh_sweep_sphere_unless_passed(const Bounding_Volume_Hierarchy &bvh, const vec3f& from,
                                const vec3f& to, float radius,
@@ -413,9 +404,11 @@ void bvh_intersect_ray_all(const Bounding_Volume_Hierarchy &bvh, const vec3f& or
   if (bvh.nodes.empty())
     return;
 
-  walk_ray(bvh, origin, dir, disabled_geometry, [] { return FLT_MAX; },
+  walk_ray(bvh, origin, dir, [] { return FLT_MAX; },
            [&](const BVH_Primitive &prim)
            {
+             if (collision_is_disabled(disabled_geometry, prim.id))
+               return;
              ray_hit_result_t candidate;
              if (!intersect_ray_primitive(prim, origin, dir, FLT_MAX, candidate))
                return;

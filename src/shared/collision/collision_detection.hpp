@@ -153,14 +153,15 @@ bool intersect_box_sweep_convex_hull(Span<const Plane> planes, const vec3f& orig
 // and every test pass -- and what the default argument below spells, so a query
 // that answers for something other than the running session says nothing.
 //
-// The byte has a third value. GEOMETRY_SOLID_WHERE_LIT is not there for a ray or a sweep either;
-// only a hull reads it apart, and collides where a reveal cone touches (collect_collision_candidates).
-// And a fourth, its inverse: GEOMETRY_SOLID_UNLESS_ERASED is solid for a ray or a sweep, and a hull
-// passes it only where an erase cone holds everything it touches.
+// The byte has a third value. GEOMETRY_SOLID_WHERE_LIT is not there for a plain ray; a hull and a
+// sphere sweep read it apart, and collide where a reveal cone touches the contact.
+// And a fourth, its inverse: GEOMETRY_SOLID_UNLESS_ERASED is solid for a plain ray, and a hull or a
+// sweep passes it only where an erase cone holds everything it touches.
 // The same pair again with a shadow volume for the cone (shadow_volume.hpp): GEOMETRY_SOLID_IN_SHADOW
 // collides where a volume touches, GEOMETRY_SOLID_UNLESS_SHADOWED is passed where one holds the contact.
 // GEOMETRY_SOLID_WHERE_LENSED and the values after it, one per Lens_Filter, collide where a watcher sees
-// the contact through a lens of that colour (lighting/lens.hpp); a ray or a sweep passes them like the lit one.
+// the contact through a lens of that colour (lighting/lens.hpp); a plain ray passes them like the lit one.
+// The contact rule itself is geometry_is_solid_at_contact (predicted_world.hpp).
 inline constexpr uint8_t GEOMETRY_SOLID                 = 0;
 inline constexpr uint8_t GEOMETRY_NOT_THERE             = 1;
 inline constexpr uint8_t GEOMETRY_SOLID_WHERE_LIT       = 2;
@@ -237,11 +238,8 @@ struct sweep_hit_t
 // clipped by intersect_sphere_sweep_convex_hull; one without (the editor's BVH)
 // by its box inflated by the radius. Nothing past `to` is reported, and a
 // zero-length sweep answers nothing: there is no direction to enter along.
-[[nodiscard]] std::optional<sweep_hit_t>
-bvh_sweep_sphere(const Bounding_Volume_Hierarchy &bvh, const vec3f& from, const vec3f& to,
-                 float radius, Span<const uint8_t> disabled_geometry = {});
-
-// The same sweep, except a primitive the sphere would enter at `t` is passed through when `passes(primitive, t)`.
+// Only GEOMETRY_NOT_THERE is skipped outright: every other primitive the sphere would enter at `t`
+// is asked `passes(primitive, t)` and passed through when it says so.
 [[nodiscard]] std::optional<sweep_hit_t>
 bvh_sweep_sphere_unless_passed(const Bounding_Volume_Hierarchy &bvh, const vec3f& from,
                                const vec3f& to, float radius,

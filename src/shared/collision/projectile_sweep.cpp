@@ -16,6 +16,8 @@ namespace shared
 namespace
 {
 
+constexpr float SWEEP_CONTACT_PADDING = 1.f;
+
 aabb_bounds_t segment_bounds(const linalg::vec3f& from, const linalg::vec3f& to, float radius)
 {
   aabb_bounds_t bounds;
@@ -82,8 +84,20 @@ std::optional<projectile_hit_t> sweep_projectile(const Bounding_Volume_Hierarchy
   std::optional<projectile_hit_t> nearest =
       sweep_sphere_against_movers(world.movers, world.mover_uids_to_ignore, from, to, radius);
 
-  const std::optional<sweep_hit_t> map_hit =
-      bvh_sweep_sphere(bvh, from, to, radius, world.disabled_geometry);
+  const float         reach_length = radius + SWEEP_CONTACT_PADDING;
+  const linalg::vec3f reach{reach_length, reach_length, reach_length};
+  const auto passes_where_not_solid = [&](const BVH_Primitive& primitive, float t)
+  {
+    const uint8_t state = get_geometry_state_by_collision_id(world.disabled_geometry, primitive.id);
+    if (state == GEOMETRY_SOLID)
+      return false;
+    const linalg::vec3f center  = from + (to - from) * t;
+    const aabb_bounds_t contact = intersection_aabb({center - reach, center + reach}, primitive.aabb);
+    return !geometry_is_solid_at_contact(world, state, contact);
+  };
+
+  const std::optional<sweep_hit_t> map_hit = bvh_sweep_sphere_unless_passed(
+      bvh, from, to, radius, world.disabled_geometry, passes_where_not_solid);
   if (map_hit && (!nearest || map_hit->t < nearest->t))
     nearest = projectile_hit_t{.position   = from + (to - from) * map_hit->t,
                                .normal     = map_hit->normal,
@@ -102,38 +116,6 @@ std::optional<laser_dot_t> find_laser_dot(const Bounding_Volume_Hierarchy& bvh,
   if (!hit)
     return std::nullopt;
   return laser_dot_t{.position = hit->position, .normal = hit->normal};
-}
-
-std::optional<projectile_hit_t> sweep_body(const Bounding_Volume_Hierarchy& bvh,
-                                           const predicted_world_t& world,
-                                           const linalg::vec3f& from, const linalg::vec3f& to,
-                                           float radius)
-{
-  std::optional<projectile_hit_t> nearest =
-      sweep_sphere_against_movers(world.movers, world.mover_uids_to_ignore, from, to, radius);
-
-  const linalg::vec3f reach{radius, radius, radius};
-  const auto passes_erased_hole = [&](const BVH_Primitive& primitive, float t)
-  {
-    const uint8_t state = get_geometry_state_by_collision_id(world.disabled_geometry, primitive.id);
-    if (state != GEOMETRY_SOLID_UNLESS_ERASED && state != GEOMETRY_SOLID_UNLESS_SHADOWED)
-      return false;
-    const linalg::vec3f center  = from + (to - from) * t;
-    const aabb_bounds_t contact = intersection_aabb({center - reach, center + reach}, primitive.aabb);
-    return state == GEOMETRY_SOLID_UNLESS_ERASED
-               ? any_erase_cone_contains_box(world.reveal_cones, contact)
-               : any_shadow_volume_contains_box(world.shadow_volumes, contact);
-  };
-
-  const std::optional<sweep_hit_t> map_hit = bvh_sweep_sphere_unless_passed(
-      bvh, from, to, radius, world.disabled_geometry, passes_erased_hole);
-  if (map_hit && (!nearest || map_hit->t < nearest->t))
-    nearest = projectile_hit_t{.position   = from + (to - from) * map_hit->t,
-                               .normal     = map_hit->normal,
-                               .t          = map_hit->t,
-                               .entity_uid = null_entity_uid};
-
-  return nearest;
 }
 
 void collect_projectile_targets(const Entity_System& system, std::vector<projectile_target_t>& out)

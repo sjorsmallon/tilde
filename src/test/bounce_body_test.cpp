@@ -185,8 +185,9 @@ int main()
           "a resting body falls when the floor under it is erased");
 
     const std::optional<shared::projectile_hit_t> shot =
-        shared::sweep_projectile(floors, erased, {0.f, 100.f, 0.f}, {0.f, -100.f, 0.f}, RADIUS);
-    check(shot && near(shot->position.y, RADIUS, 0.01f), "a shot still meets it, hole or not");
+        shared::sweep_projectile(floors, erased, {0.f, 100.f, 0.f}, {0.f, -400.f, 0.f}, RADIUS);
+    check(shot && near(shot->position.y, -300.f + RADIUS, 0.01f),
+          "a shot passes the hole as the body does, onto the floor below");
   }
 
   printf("a body lands on a mover at its end pose\n");

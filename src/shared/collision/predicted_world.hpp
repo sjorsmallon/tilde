@@ -141,6 +141,10 @@ struct predicted_world_storage_t
   return view;
 }
 
+// THE ONE RULE for a byte of the disabled set: whether that geometry is solid where `contact` is, asked by the hull and the sweep alike.
+[[nodiscard]] bool geometry_is_solid_at_contact(const predicted_world_t& world, uint8_t state,
+                                                const aabb_bounds_t& contact);
+
 // The tick a build is FOR. The interval is derived from `tickrate_hz` through tick_interval_seconds, never carried beside it.
 struct predicted_world_settings_t
 {

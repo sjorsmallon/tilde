@@ -224,6 +224,44 @@ int main()
           "with the block switched off the floor does");
   }
 
+  printf("a shot meets a lit-only floor where a cone lights it, and an erasable one unless the hole holds it\n");
+  {
+    const auto cone_from_above = [](float half_angle_degrees, entities::Reveal_Cone_Kind kind)
+    {
+      return shared::planes_of_reveal_cone(
+          {.apex                 = {0.f, 256.f, 0.f},
+           .axis                 = {0.f, -1.f, 0.f},
+           .range                = 1024.f,
+           .cosine_of_half_angle = std::cos(linalg::to_radians(half_angle_degrees)),
+           .kind                 = kind});
+    };
+    const shared::reveal_cone_planes_t reveals = cone_from_above(25.f, entities::Reveal_Cone_Kind::Reveals);
+    const shared::reveal_cone_planes_t erases  = cone_from_above(25.f, entities::Reveal_Cone_Kind::Erases);
+    const shared::reveal_cone_planes_t pinhole = cone_from_above(2.f, entities::Reveal_Cone_Kind::Erases);
+
+    const auto shot_stops_at = [&](uint8_t state, Span<const shared::reveal_cone_planes_t> cones, float x,
+                                   float radius)
+    {
+      const shared::predicted_world_t world{.disabled_geometry = {&state, 1}, .reveal_cones = cones};
+      const std::optional<shared::projectile_hit_t> hit =
+          shared::sweep_projectile(floor, world, {x, 100.f, 0.f}, {x, -100.f, 0.f}, radius);
+      return hit ? hit->position.y : -1e9f;
+    };
+
+    check(shot_stops_at(GEOMETRY_SOLID_WHERE_LIT, {}, 0.f, 8.f) == -1e9f, "a rocket passes the lit-only floor in the dark");
+    check(near(shot_stops_at(GEOMETRY_SOLID_WHERE_LIT, {&reveals, 1}, 0.f, 8.f), 8.f), "and stops on it under the cone");
+    check(near(shot_stops_at(GEOMETRY_SOLID_WHERE_LIT, {&reveals, 1}, 0.f, 0.f), 0.f), "a hitscan stops on it too");
+    check(shot_stops_at(GEOMETRY_SOLID_WHERE_LIT, {&reveals, 1}, 1000.f, 8.f) == -1e9f,
+          "outside the cone the same floor is not there");
+    check(shot_stops_at(GEOMETRY_SOLID_WHERE_LIT, {&erases, 1}, 0.f, 8.f) == -1e9f, "an Eraser's cone makes nothing solid");
+
+    check(near(shot_stops_at(GEOMETRY_SOLID_UNLESS_ERASED, {}, 0.f, 8.f), 8.f), "an erasable floor with no cone stops a rocket");
+    check(shot_stops_at(GEOMETRY_SOLID_UNLESS_ERASED, {&erases, 1}, 0.f, 8.f) == -1e9f, "the rocket passes through the hole");
+    check(shot_stops_at(GEOMETRY_SOLID_UNLESS_ERASED, {&erases, 1}, 0.f, 0.f) == -1e9f, "and so does a hitscan");
+    check(near(shot_stops_at(GEOMETRY_SOLID_UNLESS_ERASED, {&pinhole, 1}, 0.f, 8.f), 8.f),
+          "a hole smaller than the rocket holds it");
+  }
+
   printf("a target is a box, and the shooter is not one\n");
   {
     shared::Entity_System system;

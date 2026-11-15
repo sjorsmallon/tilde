@@ -49,7 +49,7 @@ struct Entity_System;
 // the hot loop pays a load and a compare.
 //
 // The values are collision_detection.hpp's GEOMETRY_*: an owner that is `solid_only_when_revealed`
-// and blocks the mover writes GEOMETRY_SOLID_WHERE_LIT, which only a hull tells from "not there".
+// and blocks the mover writes GEOMETRY_SOLID_WHERE_LIT, which a hull and a sweep tell from "not there".
 using disabled_geometry_t = std::vector<uint8_t>;
 
 // THE ONE RULE, asked by both collects so they cannot disagree about the switch.

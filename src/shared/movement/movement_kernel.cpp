@@ -240,41 +240,9 @@ void collect_collision_candidates(const Bounding_Volume_Hierarchy& bvh,
   for (const BVH_Primitive* primitive : overlapping)
   {
     const uint8_t state = get_geometry_state_by_collision_id(world.disabled_geometry, primitive->id);
-    if (state == GEOMETRY_SOLID_WHERE_LIT)
-    {
-      const shared::aabb_bounds_t contact = shared::intersection_aabb(bounds, primitive->aabb);
-      if (!shared::any_reveal_cone_touches_box(world.reveal_cones, contact))
-        continue;
-    }
-    else if (state == GEOMETRY_SOLID_UNLESS_ERASED)
-    {
-      const shared::aabb_bounds_t contact = shared::intersection_aabb(bounds, primitive->aabb);
-      if (shared::any_erase_cone_contains_box(world.reveal_cones, contact))
-        continue;
-    }
-    else if (state == GEOMETRY_SOLID_IN_SHADOW)
-    {
-      const shared::aabb_bounds_t contact = shared::intersection_aabb(bounds, primitive->aabb);
-      if (!shared::any_shadow_volume_touches_box(world.shadow_volumes, contact))
-        continue;
-    }
-    else if (state == GEOMETRY_SOLID_UNLESS_SHADOWED)
-    {
-      const shared::aabb_bounds_t contact = shared::intersection_aabb(bounds, primitive->aabb);
-      if (shared::any_shadow_volume_contains_box(world.shadow_volumes, contact))
-        continue;
-    }
-    else if (const std::optional<entities::Lens_Filter> filter = try_get_lens_filter_for_geometry_state(state))
-    {
-      const shared::aabb_bounds_t contact = shared::intersection_aabb(bounds, primitive->aabb);
-      if (!shared::any_lens_watcher_sees_point(world.lens_watchers, world.lenses, *filter,
-                                               shared::get_aabb_center(contact)))
-        continue;
-    }
-    else if (state != GEOMETRY_SOLID)
-    {
+    if (state != GEOMETRY_SOLID &&
+        !geometry_is_solid_at_contact(world, state, shared::intersection_aabb(bounds, primitive->aabb)))
       continue;
-    }
     out.push_back({&primitive->collision_planes, &primitive->face_polygons,
                    shared::null_entity_uid, primitive->id});
   }

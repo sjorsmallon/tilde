@@ -48,7 +48,8 @@ struct projectile_target_t
 sweep_sphere_against_movers(Span<const mover_t> movers, Span<const entity_uid_t> mover_uids_to_ignore,
                             const linalg::vec3f& from, const linalg::vec3f& to, float radius);
 
-// The map through the world's disabled set, then the movers; the nearer wins.
+// The map through the world's disabled set, then the movers; the nearer wins. A piece that is solid only
+// somewhere (lit, shadowed, lensed, erased) is asked geometry_is_solid_at_contact where the sphere meets it, as a hull asks.
 [[nodiscard]] std::optional<projectile_hit_t>
 sweep_projectile(const Bounding_Volume_Hierarchy& bvh, const predicted_world_t& world,
                  const linalg::vec3f& from, const linalg::vec3f& to, float radius);
@@ -63,11 +64,6 @@ struct laser_dot_t
 [[nodiscard]] std::optional<laser_dot_t>
 find_laser_dot(const Bounding_Volume_Hierarchy& bvh, const predicted_world_t& world,
                const linalg::vec3f& eye, const linalg::vec3f& aim, float range);
-
-// What a bounce body asks instead: the same sweep, except it passes an erasable piece where an erase cone holds all it touches, as a hull does.
-[[nodiscard]] std::optional<projectile_hit_t>
-sweep_body(const Bounding_Volume_Hierarchy& bvh, const predicted_world_t& world,
-           const linalg::vec3f& from, const linalg::vec3f& to, float radius);
 
 // A living player by its hull, a living damageable by its volume, a physics
 // body by its size, a weapon lying in the world by its volume.

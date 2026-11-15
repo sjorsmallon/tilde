@@ -98,6 +98,19 @@ groups
       "uid" "55"
     }
   }
+  group
+  {
+    "_uid" "85"
+    "name" "geometry_owner_entity 84"
+    member
+    {
+      "uid" "84"
+    }
+    member
+    {
+      "uid" "38"
+    }
+  }
 }
 mesh
 {
@@ -5917,6 +5930,7 @@ mesh
   "roughness" "0.500000"
   "visible" "1"
   "is_wireframe" "0"
+  "owner" "84"
   face
   {
     "indices" "0 1 2 3 4 5 6 7 8 9 10"
@@ -6623,7 +6637,7 @@ mesh
 mesh
 {
   "_uid" "45"
-  "position" "327.026001 969.040833 -1678.68958"
+  "position" "384 969.040833 -1664"
   "rotation" "0 0 0 1"
   "color" "1.000000 1.000000 1.000000"
   "roughness" "0.500000"
@@ -20960,7 +20974,7 @@ entity
 {
   "classname" "player_spawn_entity"
   "_uid" "2"
-  "position" "-7317.308 302.88593 -308.9339"
+  "position" "-12053.309 300.53085 -374.98297"
   "orientation" "0 0 0 1"
   "name" ""
   "spawn_type" "Human"
@@ -20982,33 +20996,11 @@ entity
 {
   "classname" "player_spawn_entity"
   "_uid" "4"
-  "position" "-7317.308 303.38593 203.06609"
+  "position" "-12053.309 301.03085 137.01703"
   "orientation" "0 0 0 1"
   "name" ""
   "spawn_type" "Human"
   "team_allegiance" "Blu"
-}
-entity
-{
-  "classname" "spot_light_entity"
-  "_uid" "9"
-  "position" "1357.4805 1951.269 -690.5916"
-  "orientation" "0.24317504 0.24317504 -0.6639773 0.6639773"
-  "name" ""
-  "switch_state.value" "true"
-  "light.color" "1 1 1"
-  "light.intensity" "1024"
-  "light.mode" "Dynamic"
-  "light.source_radius" "0"
-  "light.casts_shadows" "true"
-  "light.cuts_geometry" "false"
-  "light.solid_shadows" "None"
-  "rides.mover" "0"
-  "range" "2056"
-  "inner_degrees" "20"
-  "outer_degrees" "11.2"
-  "beam" "false"
-  "solid_beam" "false"
 }
 entity
 {
@@ -21039,7 +21031,7 @@ entity
 {
   "classname" "weapon_entity"
   "_uid" "18"
-  "position" "1352.7029 1185.9875 -910.68964"
+  "position" "1345.5677 1367.6586 -896"
   "orientation" "-0.34286577 -0.61841977 0.34286577 0.61841977"
   "name" ""
   "ammo" "-1"
@@ -21059,50 +21051,6 @@ entity
   "render.offset" "0 0 0"
   "render.scale" "1 1 1"
   "render.rotation" "0 0 0 1"
-}
-entity
-{
-  "classname" "spot_light_entity"
-  "_uid" "20"
-  "position" "1353.1344 1221.9193 -695.2768"
-  "orientation" "0.00026447888 -0.00026290424 -0.70499235 0.7092148"
-  "name" ""
-  "switch_state.value" "true"
-  "light.color" "1 1 1"
-  "light.intensity" "1024"
-  "light.mode" "Dynamic"
-  "light.source_radius" "0"
-  "light.casts_shadows" "true"
-  "light.cuts_geometry" "false"
-  "light.solid_shadows" "None"
-  "rides.mover" "0"
-  "range" "2056"
-  "inner_degrees" "20"
-  "outer_degrees" "11.2"
-  "beam" "false"
-  "solid_beam" "false"
-}
-entity
-{
-  "classname" "spot_light_entity"
-  "_uid" "25"
-  "position" "2119.0261 1317.5474 -1587.8053"
-  "orientation" "-0.14708295 -0.61993945 -0.6907561 0.34190342"
-  "name" ""
-  "switch_state.value" "true"
-  "light.color" "1 1 1"
-  "light.intensity" "512"
-  "light.mode" "Dynamic"
-  "light.source_radius" "0"
-  "light.casts_shadows" "true"
-  "light.cuts_geometry" "false"
-  "light.solid_shadows" "None"
-  "rides.mover" "0"
-  "range" "2056"
-  "inner_degrees" "20"
-  "outer_degrees" "11.2"
-  "beam" "false"
-  "solid_beam" "false"
 }
 entity
 {
@@ -21270,7 +21218,7 @@ entity
   "classname" "reveal_light_entity"
   "_uid" "73"
   "position" "-2304 1614.2295 -1024"
-  "orientation" "-0.21027127 0.110152066 -0.6631063 0.7098892"
+  "orientation" "-0.009821355 -0.09954227 -0.69557714 0.71145445"
   "name" ""
   "switch_state.value" "true"
   "rides.mover" "78"
@@ -21321,10 +21269,61 @@ entity
   "classname" "path_node_entity"
   "_uid" "82"
   "position" "-1792 1614.6998 1024"
-  "orientation" "-0.04243457 0.23432468 -0.4612209 0.854732"
+  "orientation" "-0.052354023 0.23230971 -0.4244818 0.8735598"
   "name" ""
   "next" "0"
   "traversal_seconds" "1"
   "wait_seconds" "0"
   "easing" "Linear"
+}
+entity
+{
+  "classname" "reveal_light_entity"
+  "_uid" "83"
+  "position" "4136.2725 949.5474 -1191.4889"
+  "orientation" "0.23525345 -0.9283959 0.07065429 0.2788276"
+  "name" ""
+  "switch_state.value" "false"
+  "rides.mover" "0"
+  "kind" "Reveals"
+  "range" "3096"
+  "half_angle_degrees" "40.5"
+  "intensity" "2048"
+  "color" "1 0.95 0.85"
+}
+entity
+{
+  "classname" "geometry_owner_entity"
+  "_uid" "84"
+  "position" "3323.7646 567.7602 -689.0084"
+  "orientation" "0 0 0 1"
+  "name" ""
+  "switch_state.value" "true"
+  "wipe_timer" "0"
+  "passable_by" "Free_For_All"
+  "revealed_by_light" "true"
+  "solid_only_when_revealed" "false"
+  "erased_by_light" "false"
+  "solid_only_in_shadow" "false"
+  "erased_in_shadow" "false"
+  "revealed_by_lens" "false"
+  "lens_filter" "Red"
+  "solid_only_when_viewed_through_a_lens" "false"
+  "casts_dynamic_shadow" "false"
+  "casts_solid_from_lens" "false"
+}
+entity
+{
+  "classname" "reveal_light_entity"
+  "_uid" "86"
+  "position" "1345.5677 1367.6586 -896"
+  "orientation" "0 0 -0.70710677 0.70710677"
+  "name" ""
+  "switch_state.value" "true"
+  "rides.mover" "0"
+  "kind" "Reveals"
+  "range" "1024"
+  "half_angle_degrees" "25"
+  "intensity" "20"
+  "color" "1 0.95 0.85"
 }

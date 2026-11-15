@@ -18,7 +18,7 @@ bounce_body_t bounce_step(const Bounding_Volume_Hierarchy& bvh, const predicted_
   if (out.bounce.at_rest)
   {
     const linalg::vec3f below = out.position - linalg::vec3f{0.f, BOUNCE_SUPPORT_PROBE, 0.f};
-    if (sweep_body(bvh, world, out.position, below, radius))
+    if (sweep_projectile(bvh, world, out.position, below, radius))
       return body;
     out.bounce.at_rest = false;
   }
@@ -31,7 +31,7 @@ bounce_body_t bounce_step(const Bounding_Volume_Hierarchy& bvh, const predicted_
   {
     const linalg::vec3f to = out.position + velocity * remaining;
     const std::optional<projectile_hit_t> hit =
-        sweep_body(bvh, world, out.position, to, radius);
+        sweep_projectile(bvh, world, out.position, to, radius);
     if (!hit)
     {
       out.position = to;

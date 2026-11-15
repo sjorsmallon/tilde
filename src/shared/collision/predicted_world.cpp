@@ -13,6 +13,29 @@
 namespace shared
 {
 
+bool geometry_is_solid_at_contact(const predicted_world_t& world, uint8_t state, const aabb_bounds_t& contact)
+{
+  switch (state)
+  {
+  case GEOMETRY_SOLID:
+    return true;
+  case GEOMETRY_NOT_THERE:
+    return false;
+  case GEOMETRY_SOLID_WHERE_LIT:
+    return any_reveal_cone_touches_box(world.reveal_cones, contact);
+  case GEOMETRY_SOLID_UNLESS_ERASED:
+    return !any_erase_cone_contains_box(world.reveal_cones, contact);
+  case GEOMETRY_SOLID_IN_SHADOW:
+    return any_shadow_volume_touches_box(world.shadow_volumes, contact);
+  case GEOMETRY_SOLID_UNLESS_SHADOWED:
+    return !any_shadow_volume_contains_box(world.shadow_volumes, contact);
+  default:
+    break;
+  }
+  const std::optional<entities::Lens_Filter> filter = try_get_lens_filter_for_geometry_state(state);
+  return filter && any_lens_watcher_sees_point(world.lens_watchers, world.lenses, *filter, get_aabb_center(contact));
+}
+
 void compute_disabled_geometry_per_team(const game_session_t& session, predicted_world_storage_t& out)
 {
   for (uint32_t team = 0; team < out.disabled_geometry.count; ++team)
