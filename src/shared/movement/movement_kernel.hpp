@@ -82,6 +82,8 @@ struct collision_candidate_t
   const std::vector<std::vector<vec3f>>* face_polygons;
   shared::entity_uid_t                   mover_uid = shared::null_entity_uid;
   Collision_Id                           id        = {};
+  // Solid here only because of where a light, a shadow or a lens is: it stops a hull, never moves one.
+  bool                                   solid_by_condition = false;
 };
 
 [[nodiscard]] shared::aabb_bounds_t hull_aabb(const vec3& center, float half_width,

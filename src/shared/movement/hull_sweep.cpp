@@ -42,6 +42,10 @@ std::optional<hull_sweep_hit_t> sweep_hull(const Bounding_Volume_Hierarchy& bvh,
     if (t_enter > 1.f || approach < MINIMUM_APPROACH)
       continue;
 
+    const bool started_inside = t_enter * approach < -hull_sweep_skin;
+    if (candidate.solid_by_condition && started_inside)
+      continue;
+
     const float t = std::clamp(t_enter - hull_sweep_skin / approach, 0.f, 1.f);
     if (nearest && t >= nearest->t)
       continue;

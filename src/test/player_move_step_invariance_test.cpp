@@ -2957,7 +2957,9 @@ int main()
              ? "endpoint average (trapezoid)"
              : "end velocity (semi-implicit Euler)");
 
-  const cvar_state_t cvars;
+  cvar_state_t cvars;
+  cvars.pm_model    = cvars::Locomotion_Model::quake;
+  cvars.pm_maxspeed = 320.f;
 
   test_gravity_velocity_is_exact(cvars);
   test_gravity_position_is_first_order(cvars);

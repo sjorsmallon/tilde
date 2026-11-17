@@ -8,6 +8,7 @@
 #include "collision/predicted_world.hpp"
 #include "map/map_geometry.hpp"
 #include "movement/hull_sweep.hpp"
+#include "movement/movement_kernel.hpp"
 #include "movement/player_constants.hpp"
 
 #include <cmath>
@@ -240,6 +241,61 @@ int main()
     check(beside && beside->mover_uid == shared::null_entity_uid &&
               near(stop_point(beside_from, beside_to, *beside).y, half_height + skin),
           "beside the platform the floor answers");
+  }
+
+  printf("a floor that is solid only where lit stops a hull and never moves one\n");
+  {
+    const shared::mesh_geometry_t lit_floor = shared::make_box_mesh({0.f, -64.f, 0.f}, {256.f, 64.f, 256.f});
+    const Bounding_Volume_Hierarchy lit_bvh = build_world({lit_floor});
+    const shared::reveal_cone_planes_t cone = shared::planes_of_reveal_cone(
+        {.apex                 = {0.f, 400.f, 0.f},
+         .axis                 = {0.f, -1.f, 0.f},
+         .range                = 2000.f,
+         .cosine_of_half_angle = std::cos(linalg::to_radians(60.f))});
+    const uint8_t                   lit_state = GEOMETRY_SOLID_WHERE_LIT;
+    const shared::predicted_world_t lit_world{.disabled_geometry = {&lit_state, 1}, .reveal_cones = {&cone, 1}};
+
+    const vec3 above{0.f, 200.f, 0.f};
+    const vec3 below{0.f, -400.f, 0.f};
+    const vec3 resting{0.f, half_height + skin, 0.f};
+    const vec3 sunk{0.f, half_height - 10.f, 0.f};
+    const vec3 one_down{0.f, 1.f, 0.f};
+
+    const std::optional<shared::hull_sweep_hit_t> landing = sweep(lit_bvh, lit_world, above, below);
+    check(landing && near(stop_point(above, below, *landing).y, half_height + skin),
+          "a hull falling onto the lit floor lands on it");
+
+    const std::optional<shared::hull_sweep_hit_t> standing = sweep(lit_bvh, lit_world, resting, resting - one_down);
+    check(standing && standing->t == 0.f, "a hull resting on it is held");
+
+    const vec3 a_hair_in{0.f, half_height - skin * 0.5f, 0.f};
+    const std::optional<shared::hull_sweep_hit_t> held = sweep(lit_bvh, lit_world, a_hair_in, a_hair_in - one_down);
+    check(held && held->t == 0.f, "a hull less than the skin inside it is still resting on it");
+
+    check(!sweep(lit_bvh, lit_world, sunk, sunk - one_down).has_value(),
+          "a hull the light came back on while it was sunk in keeps falling");
+    check(!sweep(lit_bvh, lit_world, sunk, below).has_value(), "and falls out of the bottom");
+
+    const std::optional<shared::hull_sweep_hit_t> from_below = sweep(lit_bvh, lit_world, below, above);
+    check(from_below && near(from_below->normal, {0.f, -1.f, 0.f}),
+          "once out, the floor stops it again from below");
+
+    const shared::predicted_world_t plain_world{};
+    const std::optional<shared::hull_sweep_hit_t> plain_sunk = sweep(lit_bvh, plain_world, sunk, sunk - one_down);
+    check(plain_sunk && plain_sunk->t == 0.f, "a plain floor still holds a hull that is inside it");
+
+    const shared::movement_settings_t settings{};
+    vec3                              lit_center = sunk;
+    const shared::contacts_t          lit_contacts = shared::resolve_collisions(
+        settings, shared::steep_face_rule_t::Ramp, lit_bvh, lit_world, lit_center, nullptr);
+    check(near(lit_center, sunk) && lit_contacts.wall_planes.empty() && lit_contacts.ceiling_planes.empty() &&
+              lit_contacts.ground_planes.empty(),
+          "the resolver does not push a hull out of the lit floor");
+
+    vec3 plain_center = sunk;
+    (void)shared::resolve_collisions(settings, shared::steep_face_rule_t::Ramp, lit_bvh, plain_world,
+                                     plain_center, nullptr);
+    check(near(plain_center.y, half_height + skin), "and still pushes one out of a plain floor");
   }
 
   if (failure_count == 0)

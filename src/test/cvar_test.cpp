@@ -296,10 +296,11 @@ void test_text_conversion()
   std::cout << "[text conversion]\n";
 
   cvars::cvar_state_t state;
+  state.pm_maxspeed = 320.f;
 
   std::optional<std::string> text = cvars::try_cvar_to_text(state, cvars::cvar_id::pm_maxspeed);
   check(text.has_value(), "try_cvar_to_text succeeds for an f32");
-  check_equal(*text, "320", "f32 default formats without a trailing .0");
+  check_equal(*text, "320", "a whole f32 formats without a trailing .0");
 
   text = cvars::try_cvar_to_text(state, cvars::cvar_id::debug_show_navmesh);
   check(text.has_value(), "try_cvar_to_text succeeds for a bool");
@@ -384,8 +385,6 @@ void test_text_conversion()
         "an enum name is case sensitive, like every other declared name");
   check(state.pm_quake_bunnyhop == before, "a rejected enum write leaves the value alone");
 
-  check(state.pm_model == cvars::Locomotion_Model::quake,
-        "pm_model defaults to quake, so existing movement is untouched");
   for (uint32_t value = 0; value < cvars::Locomotion_Model_COUNT; ++value)
   {
     const cvars::Locomotion_Model mode = (cvars::Locomotion_Model)value;
@@ -423,6 +422,7 @@ void test_console_cvars()
         "\"\" sets a string cvar to the empty string");
 
   // A bare read is always local, even for a cvar this process does not own.
+  state.pm_maxspeed = 320.f;
   check(run(state, table, "pm_maxspeed", &reply) == cvars::console_result_t::ok,
         "a bare read succeeds");
   check(reply.find("pm_maxspeed is 320") != std::string::npos,
@@ -482,6 +482,7 @@ void test_console_forwarding()
 
   // A networked client does not own server state: the whole LINE goes upstream
   // and comes back through this same function on the other side.
+  state.pm_maxspeed = 320.f;
   check(run(state, table, "pm_maxspeed 500", &reply) ==
             cvars::console_result_t::forwarded,
         "a @Mirrored write forwards");
@@ -826,6 +827,7 @@ void test_mirroring()
       make_cvar_value((uint16_t)cvars::cvar_id::pm_maxspeed, "not_a_number"),
       make_cvar_value((uint16_t)cvars::cvar_id::pm_jumpspeed, "290")};
   cvars::cvar_state_t partial;
+  partial.pm_maxspeed = 320.f;
   check(!shared::apply_cvar_values(partial, mixed),
         "a set with a bad value reports failure");
   check(partial.pm_maxspeed == 320.f, "the bad value left its cvar alone");
@@ -847,7 +849,7 @@ void test_mirror_revert()
   // A client mid-connection: the server has pushed @Mirrored values, and the
   // player has set some cvars of their own alongside them.
   cvars::cvar_state_t client;
-  client.pm_maxspeed  = 500.f;
+  client.pm_maxspeed  = defaults.pm_maxspeed + 100.f;
   client.pm_jumpspeed = 400.f;
   client.cl_timescale = 0.25f;        // unflagged, locally owned
   client.debug_show_navmesh = true;   // unflagged, locally owned

@@ -459,8 +459,9 @@ int main()
     const shared::weapon_definition_t& dash =
         shared::get_weapon_definition(entities::Weapon::Dash);
 
-    const cvars::cvar_state_t         defaults{};
-    const shared::movement_settings_t settings = shared::movement_settings_from_cvars(defaults);
+    cvars::cvar_state_t quake_cvars{};
+    quake_cvars.pm_model = cvars::Locomotion_Model::quake;
+    const shared::movement_settings_t settings = shared::movement_settings_from_cvars(quake_cvars);
 
     entities::Movement movement{};
     vec3f              velocity{0.f, -400.f, 0.f};

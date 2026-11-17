@@ -244,7 +244,7 @@ void collect_collision_candidates(const Bounding_Volume_Hierarchy& bvh,
         !geometry_is_solid_at_contact(world, state, shared::intersection_aabb(bounds, primitive->aabb)))
       continue;
     out.push_back({&primitive->collision_planes, &primitive->face_polygons,
-                   shared::null_entity_uid, primitive->id});
+                   shared::null_entity_uid, primitive->id, state != GEOMETRY_SOLID});
   }
 
   for (const shared::mover_t& mover : world.movers)
@@ -304,7 +304,7 @@ contacts_t resolve_collisions(const movement_settings_t& settings, steep_face_ru
   for (const collision_candidate_t& candidate : overlapping)
   {
     const std::vector<Plane>& collision_planes = *candidate.collision_planes;
-    if (collision_planes.empty())
+    if (collision_planes.empty() || candidate.solid_by_condition)
       continue;
 
     // Rebuild player AABB from (potentially updated) player_pos each iteration

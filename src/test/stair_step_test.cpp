@@ -45,7 +45,7 @@ static void add_box(std::vector<BVH_Input>& inputs, const vec3& low, const vec3&
 }
 
 // A floor whose top is y = 0 for x in [-512, 0], then `count` steps rising `riser` every `tread`
-// along +x, the last tread running on to x = 1024. A lintel, when asked for, is a slab whose
+// along +x, the last tread running on to x = 4096. A lintel, when asked for, is a slab whose
 // underside is `lintel_clearance` above the floor over the first riser.
 static Bounding_Volume_Hierarchy stair_world(int count, float riser, float tread,
                                              float lintel_clearance = 0.f)
@@ -53,7 +53,7 @@ static Bounding_Volume_Hierarchy stair_world(int count, float riser, float tread
   std::vector<BVH_Input> inputs;
   add_box(inputs, {-512.f, -64.f, -256.f}, {0.f, 0.f, 256.f});
   for (int step = 0; step < count; ++step)
-    add_box(inputs, {step * tread, -64.f, -256.f}, {1024.f, (step + 1) * riser, 256.f});
+    add_box(inputs, {step * tread, -64.f, -256.f}, {4096.f, (step + 1) * riser, 256.f});
   if (lintel_clearance > 0.f)
     add_box(inputs, {-16.f, lintel_clearance, -256.f}, {tread, lintel_clearance + 64.f, 256.f});
   return build_bvh(inputs);
